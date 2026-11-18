@@ -1,0 +1,17 @@
+node_modules/
+dist/
+outputs/
+.sites-runtime/
+.env*
+.dev.vars*
+
+src/skp-worker.js
+
+work/
+
+!.env.example
+
+src/vendor/pdf.mjs
+src/vendor/pdf.worker.mjs
+src/pdf-cmaps/
+src/pdf-fonts/

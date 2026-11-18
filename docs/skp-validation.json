@@ -1,0 +1,474 @@
+{
+  "engine": "OpenSKP 1.5.0",
+  "sourceRepository": "https://github.com/iamahsanmehmood/openskp",
+  "sourceCommit": "c98561147ea502c6d4d53a257fa4581d0c6cde1d",
+  "scope": "Parser, GLB structure and selected geometry semantics. Not a full SketchUp viewport fidelity comparison.",
+  "results": [
+    {
+      "file": "nesting_2013.skp",
+      "passed": true,
+      "inputBytes": 8466,
+      "elapsedMs": 12,
+      "triangles": 6,
+      "placedTriangles": 6,
+      "vertices": 12,
+      "nodes": 4,
+      "meshes": 3,
+      "materials": 1,
+      "textures": 0,
+      "bytes": 3512,
+      "units": "m",
+      "sourceVersion": "{13.0.1}",
+      "engine": "OpenSKP 1.5.0",
+      "bounds": {
+        "min": [
+          0,
+          0,
+          -0.2540000081062317
+        ],
+        "max": [
+          1.2699999809265137,
+          0,
+          0
+        ],
+        "size": [
+          1.2699999809265137,
+          0,
+          0.2540000081062317
+        ],
+        "center": [
+          0.6349999904632568,
+          0,
+          -0.12700000405311584
+        ]
+      },
+      "warnings": [
+        "已保留可解析的组件、基础材质和贴图；图层可见性、文字标注与特殊样式仍需对照原模型检查。"
+      ]
+    },
+    {
+      "file": "nesting_2017.skp",
+      "passed": true,
+      "inputBytes": 8761,
+      "elapsedMs": 5,
+      "triangles": 6,
+      "placedTriangles": 6,
+      "vertices": 12,
+      "nodes": 4,
+      "meshes": 3,
+      "materials": 1,
+      "textures": 0,
+      "bytes": 3512,
+      "units": "m",
+      "sourceVersion": "{17.0.1}",
+      "engine": "OpenSKP 1.5.0",
+      "bounds": {
+        "min": [
+          0,
+          0,
+          -0.2540000081062317
+        ],
+        "max": [
+          1.2699999809265137,
+          0,
+          0
+        ],
+        "size": [
+          1.2699999809265137,
+          0,
+          0.2540000081062317
+        ],
+        "center": [
+          0.6349999904632568,
+          0,
+          -0.12700000405311584
+        ]
+      },
+      "warnings": [
+        "已保留可解析的组件、基础材质和贴图；图层可见性、文字标注与特殊样式仍需对照原模型检查。"
+      ]
+    },
+    {
+      "file": "nesting_2020.skp",
+      "passed": true,
+      "inputBytes": 10403,
+      "elapsedMs": 4,
+      "triangles": 6,
+      "placedTriangles": 6,
+      "vertices": 12,
+      "nodes": 4,
+      "meshes": 3,
+      "materials": 1,
+      "textures": 0,
+      "bytes": 3512,
+      "units": "m",
+      "sourceVersion": "{20.0.1}",
+      "engine": "OpenSKP 1.5.0",
+      "bounds": {
+        "min": [
+          0,
+          0,
+          -0.2540000081062317
+        ],
+        "max": [
+          1.2699999809265137,
+          0,
+          0
+        ],
+        "size": [
+          1.2699999809265137,
+          0,
+          0.2540000081062317
+        ],
+        "center": [
+          0.6349999904632568,
+          0,
+          -0.12700000405311584
+        ]
+      },
+      "warnings": [
+        "已保留可解析的组件、基础材质和贴图；图层可见性、文字标注与特殊样式仍需对照原模型检查。"
+      ]
+    },
+    {
+      "file": "nesting_2021.skp",
+      "passed": true,
+      "inputBytes": 5710,
+      "elapsedMs": 10,
+      "triangles": 6,
+      "placedTriangles": 6,
+      "vertices": 12,
+      "nodes": 4,
+      "meshes": 3,
+      "materials": 1,
+      "textures": 0,
+      "bytes": 3512,
+      "units": "m",
+      "sourceVersion": "{25.0.575}",
+      "engine": "OpenSKP 1.5.0",
+      "bounds": {
+        "min": [
+          0,
+          0,
+          -0.2540000081062317
+        ],
+        "max": [
+          1.2699999809265137,
+          0,
+          0
+        ],
+        "size": [
+          1.2699999809265137,
+          0,
+          0.2540000081062317
+        ],
+        "center": [
+          0.6349999904632568,
+          0,
+          -0.12700000405311584
+        ]
+      },
+      "warnings": [
+        "已保留可解析的组件、基础材质和贴图；图层可见性、文字标注与特殊样式仍需对照原模型检查。"
+      ]
+    },
+    {
+      "file": "legacy_v2020_textured.skp",
+      "passed": true,
+      "inputBytes": 8452,
+      "elapsedMs": 2,
+      "triangles": 4,
+      "placedTriangles": 4,
+      "vertices": 8,
+      "nodes": 1,
+      "meshes": 1,
+      "materials": 2,
+      "textures": 1,
+      "bytes": 2852,
+      "units": "m",
+      "sourceVersion": "{20.0.1}",
+      "engine": "OpenSKP 1.5.0",
+      "bounds": {
+        "min": [
+          0,
+          0,
+          -0.5080000162124634
+        ],
+        "max": [
+          0.5080000162124634,
+          0,
+          0
+        ],
+        "size": [
+          0.5080000162124634,
+          0,
+          0.5080000162124634
+        ],
+        "center": [
+          0.2540000081062317,
+          0,
+          -0.2540000081062317
+        ]
+      },
+      "warnings": [
+        "已保留可解析的组件、基础材质和贴图；图层可见性、文字标注与特殊样式仍需对照原模型检查。"
+      ]
+    },
+    {
+      "file": "SU_File.skp",
+      "passed": true,
+      "inputBytes": 16708,
+      "elapsedMs": 16,
+      "triangles": 104,
+      "placedTriangles": 104,
+      "vertices": 165,
+      "nodes": 1,
+      "meshes": 1,
+      "materials": 1,
+      "textures": 0,
+      "bytes": 7500,
+      "units": "m",
+      "sourceVersion": "{25.0.575}",
+      "engine": "OpenSKP 1.5.0",
+      "bounds": {
+        "min": [
+          -0.6072322726249695,
+          -7.219114108078224e-16,
+          0
+        ],
+        "max": [
+          1,
+          1,
+          2.9512150287628174
+        ],
+        "size": [
+          1.6072322726249695,
+          1.0000000000000007,
+          2.9512150287628174
+        ],
+        "center": [
+          0.19638386368751526,
+          0.4999999999999996,
+          1.4756075143814087
+        ]
+      },
+      "warnings": [
+        "已保留可解析的组件、基础材质和贴图；图层可见性、文字标注与特殊样式仍需对照原模型检查。"
+      ]
+    },
+    {
+      "file": "Untitled.skp",
+      "passed": true,
+      "inputBytes": 415694,
+      "elapsedMs": 533,
+      "triangles": 18636,
+      "placedTriangles": 18636,
+      "vertices": 14670,
+      "nodes": 47,
+      "meshes": 43,
+      "materials": 8,
+      "textures": 0,
+      "bytes": 621440,
+      "units": "m",
+      "sourceVersion": "{25.0.575}",
+      "engine": "OpenSKP 1.5.0",
+      "bounds": {
+        "min": [
+          0.1188046107902207,
+          -1.4438228216156449e-15,
+          -5.188080310821533
+        ],
+        "max": [
+          13.535743713378906,
+          2.8200000000000003,
+          2.059067964553833
+        ],
+        "size": [
+          13.416939102588685,
+          2.8200000000000016,
+          7.247148275375366
+        ],
+        "center": [
+          6.827274162084564,
+          1.4099999999999995,
+          -1.56450617313385
+        ]
+      },
+      "warnings": [
+        "已保留可解析的组件、基础材质和贴图；图层可见性、文字标注与特殊样式仍需对照原模型检查。"
+      ]
+    },
+    {
+      "file": "capilla_quiroz_v17.skp",
+      "passed": true,
+      "inputBytes": 217563,
+      "elapsedMs": 29,
+      "triangles": 871,
+      "placedTriangles": 939,
+      "vertices": 1109,
+      "nodes": 4,
+      "meshes": 3,
+      "materials": 13,
+      "textures": 3,
+      "bytes": 110760,
+      "units": "m",
+      "sourceVersion": "{17.0.18899}",
+      "engine": "OpenSKP 1.5.0",
+      "bounds": {
+        "min": [
+          -8.298663139343262,
+          -0.5948390960693359,
+          -5.6441545486450195
+        ],
+        "max": [
+          19.92486000061035,
+          3.7077832221984863,
+          0
+        ],
+        "size": [
+          28.223523139953613,
+          4.302622318267822,
+          5.6441545486450195
+        ],
+        "center": [
+          5.813098430633545,
+          1.5564720630645752,
+          -2.8220772743225098
+        ]
+      },
+      "warnings": [
+        "已保留可解析的组件、基础材质和贴图；图层可见性、文字标注与特殊样式仍需对照原模型检查。"
+      ]
+    },
+    {
+      "file": "gondola_v20.skp",
+      "passed": true,
+      "inputBytes": 773396,
+      "elapsedMs": 126,
+      "triangles": 3663,
+      "placedTriangles": 57505,
+      "vertices": 7015,
+      "nodes": 99,
+      "meshes": 12,
+      "materials": 17,
+      "textures": 0,
+      "bytes": 286300,
+      "units": "m",
+      "sourceVersion": "{20.1.235}",
+      "engine": "OpenSKP 1.5.0",
+      "bounds": {
+        "min": [
+          46.168913519184215,
+          -1.7763568394002505e-15,
+          -8.14088226620655
+        ],
+        "max": [
+          49.98852161344088,
+          3.1402183175086975,
+          -3.323771168208457
+        ],
+        "size": [
+          3.8196080942566653,
+          3.1402183175086993,
+          4.817111097998092
+        ],
+        "center": [
+          48.07871756631255,
+          1.5701091587543479,
+          -5.732326717207504
+        ]
+      },
+      "warnings": [
+        "已保留可解析的组件、基础材质和贴图；图层可见性、文字标注与特殊样式仍需对照原模型检查。"
+      ]
+    },
+    {
+      "file": "instance_scale_term_2021.skp",
+      "passed": true,
+      "inputBytes": 5691,
+      "elapsedMs": 4,
+      "triangles": 12,
+      "placedTriangles": 24,
+      "vertices": 24,
+      "nodes": 3,
+      "meshes": 1,
+      "materials": 1,
+      "textures": 0,
+      "bytes": 2568,
+      "units": "m",
+      "sourceVersion": "{25.0.575}",
+      "engine": "OpenSKP 1.5.0",
+      "bounds": {
+        "min": [
+          0,
+          0,
+          -0.025399999618530275
+        ],
+        "max": [
+          0.5333999996185302,
+          0.025399999618530275,
+          0
+        ],
+        "size": [
+          0.5333999996185302,
+          0.025399999618530275,
+          0.025399999618530275
+        ],
+        "center": [
+          0.2666999998092651,
+          0.012699999809265138,
+          -0.012699999809265138
+        ]
+      },
+      "warnings": [
+        "已保留可解析的组件、基础材质和贴图；图层可见性、文字标注与特殊样式仍需对照原模型检查。"
+      ]
+    },
+    {
+      "file": "instance_scale_term_v6.skp",
+      "passed": true,
+      "inputBytes": 7899,
+      "elapsedMs": 1,
+      "triangles": 12,
+      "placedTriangles": 24,
+      "vertices": 24,
+      "nodes": 3,
+      "meshes": 1,
+      "materials": 1,
+      "textures": 0,
+      "bytes": 2568,
+      "units": "m",
+      "sourceVersion": "{6.0.1}",
+      "engine": "OpenSKP 1.5.0",
+      "bounds": {
+        "min": [
+          0,
+          0,
+          -0.025399999618530275
+        ],
+        "max": [
+          0.5333999996185302,
+          0.025399999618530275,
+          0
+        ],
+        "size": [
+          0.5333999996185302,
+          0.025399999618530275,
+          0.025399999618530275
+        ],
+        "center": [
+          0.2666999998092651,
+          0.012699999809265138,
+          -0.012699999809265138
+        ]
+      },
+      "warnings": [
+        "已保留可解析的组件、基础材质和贴图；图层可见性、文字标注与特殊样式仍需对照原模型检查。"
+      ]
+    },
+    {
+      "file": "Chinese UTF-16 names (modified nesting_2017.skp)",
+      "passed": true
+    }
+  ]
+}

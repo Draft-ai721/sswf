@@ -1,0 +1,1 @@
+{"name":"gongchuang-design-studio","version":"1.0.0","private":true,"type":"module","scripts":{"build":"node scripts/build.mjs","test":"node --test tests/*.test.mjs"},"dependencies":{"esbuild":"0.28.2","openskp":"1.5.0","pdfjs-dist":"^4.10.38"}}

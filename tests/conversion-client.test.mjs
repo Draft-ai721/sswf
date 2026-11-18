@@ -1,0 +1,7 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {createConversions} from '../src/conversion-client.js';
+const tick=()=>new Promise(resolve=>setImmediate(resolve));
+test('An old cancelled download cannot delete or overwrite a replacement task',async()=>{
+ const original=globalThis.fetch;const downloads=[];let counter=0;globalThis.fetch=()=>new Promise(resolve=>downloads.push(resolve));const updates=[];
+ const manager=createConversions({api:async(path,options)=>{if(path.endsWith('/retry'))return {model:{fileId:'f',jobId:'j'+(++counter),status:'queued'}};if(path.endsWith('/cancel'))return {model:{fileId:'f',jobId:options.headers['X-Conversion-Id'],status:'cancelled'}};throw Error('Unexpected '+path)},update:(id,m)=>updates.push(m),onReady:()=>{throw Error('Unexpected ready')}});
+ try{const old=manager.start({id:'f'});await tick();assert.equal(manager.tasks.get('f').jobId,'j1');await manager.cancel('f');const newer=manager.start({id:'f'});await tick();assert.equal(manager.tasks.get('f').jobId,'j2');downloads[0](new Response(new Uint8Array([1,2])));await old;assert.equal(manager.tasks.get('f').jobId,'j2');assert.equal(manager.states.get('f').jobId,'j2');await manager.cancel('f');downloads[1](new Response(new Uint8Array([1,2])));await newer;assert.equal(manager.tasks.size,0);assert.equal(manager.states.get('f').status,'cancelled')}finally{globalThis.fetch=original}
+});
