@@ -5,7 +5,7 @@ const roles={owner:'项目所有者',reviewer:'受邀评审教师',viewer:'只�
 export function createReviewRooms({api,project,save,modal,toast,render,closeModal}){
  let list=null,listLoading=false,record=null,recordId=null,loading=false,error='',listError='',selected='report',viewer=null,mountId=0;
  function dispose(){mountId++;viewer?.dispose();viewer=null}
- const login=()=>`<a class="btn primary" href="/signin-with-chatgpt?return_to=${encodeURIComponent('/'+location.hash)}" target="_top">登录后继续</a>`;
+ const login=()=>`<a class="btn primary" href="/login?return_to=${encodeURIComponent('/'+location.hash)}" target="_top">登录后继续</a>`;
  async function refresh(id){loading=true;error='';try{record=await api('/api/review-rooms/'+id);recordId=id}catch(e){error=e.message;record=null}finally{loading=false;render()}}
  async function refreshList(){listLoading=true;try{list=(await api('/api/review-rooms')).rooms;listError=''}catch(e){list=[];listError=e.message}finally{listLoading=false;render()}}
  function create(){const p=project();if(!p?.versions.length)return toast('先保存阶段快照，再创建评审室。');modal('邀请教师，评审一个明确的版本。','评审室只共享所选快照及其中的材料，不开放整个私人工作空间。',`<form id="room-create-form" data-project="${p.id}"><div class="form-field"><label>评审室名称</label><input name="title" required maxlength="100" value="${esc(p.name)} · 方案讨论"></div><div class="form-field"><label>共享版本</label><select name="versionId">${[...p.versions].reverse().map(v=>`<option value="${v.id}">V${v.number} · ${esc(v.label)}</option>`).join('')}</select></div><div class="callout">创建后可生成有期限的邀请链接。教师邀请绑定邮箱；未被邀请的账号无法访问评审室。</div><div class="modal-actions"><button class="btn primary" type="submit">创建评审室</button></div></form>`)}
