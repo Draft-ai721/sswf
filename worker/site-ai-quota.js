@@ -1,0 +1,7 @@
+import {AiError} from './ai-provider.js';
+const key='site-ai/quota.json',day=()=>new Date(Date.now()+8*3600000).toISOString().slice(0,10);
+async function read(bucket){const r=await bucket.get(key);return r?{value:await r.json(),etag:r.etag}:null}
+async function cas(bucket,old,value){return bucket.put(key,JSON.stringify(value),{onlyIf:old?{etagMatches:old.etag}:{etagDoesNotMatch:'*'},httpMetadata:{contentType:'application/json'}})}
+export async function reserveSite(bucket,lease,limit){for(let i=0;i<4;i++){const old=await read(bucket),value=old?.value.day===day()?old.value:{day:day(),count:0};if(value.activeUntil>Date.now())throw new AiError('网站 AI 正在处理其他任务，请稍后再试。',429,'site_busy');if(value.count>=limit)throw new AiError('网站今天的 AI 额度已用完，请明天再试或联系管理员。',429,'site_daily_limit');if(await cas(bucket,old,{...value,activeRun:lease,activeUntil:Date.now()+85000}))return}throw new AiError('网站 AI 请求较多，请稍后再试。',429,'site_busy')}
+export async function chargeSite(bucket,lease,limit){const old=await read(bucket);if(!old||old.value.activeRun!==lease||old.value.activeUntil<=Date.now())throw new AiError('网站 AI 任务排队状态已变化，请重新发起。',409,'site_lease_changed');if(old.value.count>=limit)throw new AiError('网站今天的 AI 额度已用完。',429,'site_daily_limit');if(!await cas(bucket,old,{...old.value,count:old.value.count+1}))throw new AiError('网站 AI 计数保存冲突，请稍后重试。',503,'site_quota_conflict')}
+export async function releaseSite(bucket,lease){const old=await read(bucket);if(old?.value.activeRun===lease)await cas(bucket,old,{...old.value,activeRun:null,activeUntil:0})}

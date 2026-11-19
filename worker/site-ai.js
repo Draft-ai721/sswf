@@ -1,0 +1,27 @@
+import {aiConfig,AiError} from './ai-provider.js';
+import {encryptionKey,decrypt,modelsFor,encryptConnection} from './ai-secrets.js';
+const prefix='site-ai/',key=prefix+'ai/connection.json';
+const json=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}});
+async function read(bucket){if(!bucket)return null;const object=await bucket.get(key);return object?{value:await object.json(),etag:object.etag}:null}
+const configured=r=>!!r&&!r.value.disconnected;
+export async function siteAiSummary(bucket){const r=await read(bucket);return {configured:configured(r),enabled:configured(r)&&r.value.enabled===true}}
+export async function siteAiConfig(env,bucket){const r=await read(bucket);if(!configured(r)||!r.value.enabled)return null;const stored=r.value;return {...aiConfig(env),provider:'deepseek',label:'DeepSeek',model:stored.model,key:await decrypt(env,prefix,stored),vision:stored.vision,configured:true,personal:false,managed:true,dailyLimit:stored.userDailyLimit,siteDailyLimit:stored.siteDailyLimit,verifiedAt:stored.verifiedAt}}
+async function boundedBody(response,max){const reader=response.body?.getReader();if(!reader)return new Uint8Array();const chunks=[];let length=0;while(true){const {done,value}=await reader.read();if(done)break;length+=value.length;if(length>max){await reader.cancel();throw new AiError('服务响应超过大小限制。',502,'models_invalid')}chunks.push(value)}const result=new Uint8Array(length);let pos=0;for(const chunk of chunks){result.set(chunk,pos);pos+=chunk.length}return result}
+export async function siteAiAdminApi(request,env,user,readJson){if(new URL(request.url).pathname!=='/api/admin/ai')return null;if(!user)return json({error:'请先登录工作坊。'},401);if(user.role!=='admin')return json({error:'只有管理员可以配置网站 AI 服务。'},403);const bucket=env.BUCKET;
+ try{
+  const old=await read(bucket),exists=configured(old);
+  if(request.method==='GET'){const personal=await bucket.get('users/'+encodeURIComponent(user.id)+'/ai/connection.json'),p=personal?await personal.json():null,q=await bucket.get(prefix+'quota.json'),quota=q?await q.json():null,day=new Date(Date.now()+8*3600000).toISOString().slice(0,10);return json({configured:exists,enabled:exists&&old.value.enabled,model:exists?old.value.model:null,models:exists?old.value.models:[],maskedKey:exists?old.value.maskedKey:null,verifiedAt:exists?old.value.verifiedAt:null,userDailyLimit:exists?old.value.userDailyLimit:3,siteDailyLimit:exists?old.value.siteDailyLimit:30,canUsePersonalConnection:!!p&&!p.disconnected,usage:{day,attempts:quota?.day===day?quota.count||0:0,busy:quota?.activeUntil>Date.now()}})}
+  if(['POST','PATCH','DELETE'].includes(request.method)&&request.headers.get('origin')!==new URL(request.url).origin)return json({error:'不允许跨站修改。'},403);
+  let value;
+  if(request.method==='DELETE')value={disconnected:true,enabled:false,updatedAt:new Date().toISOString()};
+  else if(request.method==='PATCH'){const data=await readJson(request);if(data.enabled!==false)throw new AiError('启用服务前请保存并验证连接。',400,'verification_required');if(!exists)return json({configured:false,enabled:false});value={...old.value,enabled:false,updatedAt:new Date().toISOString()};}
+  else if(request.method==='POST'){
+   await encryptionKey(env);const data=await readJson(request);const perUser=Number(data.userDailyLimit),perSite=Number(data.siteDailyLimit);if(typeof data.enabled!=='boolean'||!Number.isInteger(perUser)||perUser<1||perUser>50||!Number.isInteger(perSite)||perSite<1||perSite>1000||perUser>perSite)throw new AiError('请设置有效限额：个人每天 1–50 次，全站每天 1–1000 次，个人限额不能超过全站。',400,'invalid_limits');
+   let apiKey=typeof data.apiKey==='string'?data.apiKey.trim():'',personal=null;if(data.usePersonalConnection===true){const personalPrefix='users/'+encodeURIComponent(user.id)+'/',object=await bucket.get(personalPrefix+'ai/connection.json');personal=object?await object.json():null;if(!personal||personal.disconnected)throw new AiError('你尚未配置可复用的个人 DeepSeek 连接。',400,'personal_missing');apiKey=await decrypt(env,personalPrefix,personal)}else if(!apiKey&&exists)apiKey=await decrypt(env,prefix,old.value);
+   if(!/^[A-Za-z0-9_-]{16,240}$/.test(apiKey))throw new AiError('请在安全输入框填写完整的 DeepSeek API Key，或选择复用自己的已连接账号。',400,'key_required');
+   const models=await modelsFor(apiKey,boundedBody);const selectedId=data.model||personal?.model||(exists?old.value.model:null)||models.find(m=>m.id==='deepseek-flash')?.id||models.find(m=>m.id==='deepseek-chat')?.id||models[0].id,selected=models.find(m=>m.id===selectedId);if(!selected)throw new AiError('所选模型不在可用列表中，请刷新配置后重试。',400,'model_unavailable');
+   value={...await encryptConnection(env,prefix,apiKey),enabled:data.enabled,model:selected.id,models,vision:selected.vision,userDailyLimit:perUser,siteDailyLimit:perSite,maskedKey:'•••• '+apiKey.slice(-4),verifiedAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
+  }else return json({error:'不支持此操作。'},405);
+  const saved=await bucket.put(key,JSON.stringify(value),{httpMetadata:{contentType:'application/json'},onlyIf:old?{etagMatches:old.etag}:{etagDoesNotMatch:'*'}});if(!saved)throw new AiError('网站 AI 设置已在另一处改变，请刷新后重新保存。',409,'site_config_conflict');return json({configured:!value.disconnected,enabled:value.enabled,model:value.model||null,maskedKey:value.maskedKey||null});
+ }catch(e){const error=e instanceof AiError?e:new AiError('网站 AI 设置暂未保存，请稍后重试。',500,'site_ai_error');return json({error:error.message,code:error.code},error.status)}
+}

@@ -55,3 +55,7 @@ PUBLIC_URL=http://localhost:3000 npm start
 数据库启动时会为旧账号增加身份确认字段，保留原密码、角色、会话和项目。公开注册不会占用管理员专用初始化权限，也不会把第一个自行注册者设为管理员。
 
 本次自动验证包括原有功能与新增的会话登录、邀请激活、伪造身份拒绝、SQLite 并发条件写入、重启持久化、真实 Node HTTP 服务、模拟 DeepSeek 和跨账号师生评审。真实 DeepSeek 计费请求仍需用户自己验证。
+
+## 网站统一 AI 服务
+
+已有管理员登录 `/account#site-ai-settings` 后可直接配置 DeepSeek，无需更改 Railway 变量。默认个人每日 3 次、全站 30 次。详细步骤与持久化要求见 [site-ai.md](site-ai.md)。密钥只在安全表单或服务端 secret 配置中填写，不提交到仓库。
