@@ -29,11 +29,11 @@ export async function createStudioServer(options={}){
   const authResponse=await auth.handle(request);if(authResponse)return authResponse;
   if(u.pathname==='/signin-with-chatgpt')return new Response(null,{status:302,headers:{Location:'/login?return_to='+encodeURIComponent(safeReturn(u.searchParams.get('return_to'))),'Cache-Control':'no-store'}});
   const headers=new Headers(request.headers);for(const name of [...headers.keys()])if(name.toLowerCase().startsWith('oai-'))headers.delete(name);
-  const user=auth.user(request);if(user){headers.set('oai-authenticated-user-id',user.id);headers.set('oai-authenticated-user-email',user.email)}
+  const user=auth.user(request);if(user){headers.set('oai-authenticated-user-id',user.id);if(user.identityConfirmed)headers.set('oai-authenticated-user-email',user.email)}
   if(u.pathname.startsWith('/api/'))return api(new Request(request,{headers}),env);
   if(!['GET','HEAD'].includes(request.method))return new Response('Method not allowed',{status:405,headers:{Allow:'GET, HEAD'}});
   let pathname;try{pathname=decodeURIComponent(u.pathname)}catch{return new Response('Invalid path',{status:400})}
-  if(['login','setup','activate','account'].some(p=>pathname==='/'+p))pathname='/account.html';
+  if(['login','register','setup','activate','account'].some(p=>pathname==='/'+p))pathname='/account.html';
   if(pathname==='/')pathname='/index.html';
   if(pathname==='/downloads/workshop.zip'){try{const body=Buffer.from(await readFile(resolve(publicDir,'downloads/workshop.zip.base64'),'utf8'),'base64');return new Response(request.method==='HEAD'?null:body,{headers:{'Content-Type':'application/zip','Content-Disposition':'attachment; filename="gongchuang-workshop-html.zip"'}})}catch{return new Response('Not found',{status:404})}}
   const file=resolve(publicDir,'.'+pathname);if(!file.startsWith(publicDir+sep)||pathname.includes('\0'))return new Response('Not found',{status:404});

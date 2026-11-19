@@ -19,8 +19,8 @@ test('Existing project, upload and immutable snapshot APIs run on the Railway st
 test('Admin invitations bind new accounts to an email and are single use',async()=>{
  const {d}=await good('/api/auth/invite','POST',{email:'teacher@example.test'});inviteUrl=d.activationUrl;const token=new URLSearchParams(new URL(inviteUrl).hash.slice(1)).get('token');const activation=await call('/api/auth/activate','POST',{token,password:'teacher-password-123',name:'评审教师',email:'forged@example.test'},{cookie:''});assert.equal(activation.status,201);const account=await activation.json();assert.equal(account.user.email,'teacher@example.test');assert.equal(account.user.role,'member');memberCookie=activation.headers.get('set-cookie').split(';')[0];assert.equal((await call('/api/auth/activate','POST',{token,password:'new-password-123',name:'重用'},{cookie:''})).status,403);assert.equal((await call('/api/auth/invite','POST',{email:'student@example.test'},{cookie:memberCookie})).status,403);assert.equal((await good('/api/state','GET',undefined,{cookie:memberCookie})).d.state,null);
 });
-test('Public signup and cross-account spoofing cannot read owner state',async()=>{
- assert.equal((await call('/api/auth/register','POST',{email:'owner@example.test',password:'hacker-password'})).status,404);const r=await good('/api/state','GET',undefined,{cookie:memberCookie,'oai-authenticated-user-id':(await good('/api/auth/me')).d.user.id});assert.equal(r.d.state,null);
+test('Duplicate registration and cross-account spoofing cannot read owner state',async()=>{
+ assert.equal((await call('/api/auth/register','POST',{email:'owner@example.test',name:'冒用邮箱',password:'hacker-password',confirmPassword:'hacker-password'},{cookie:''})).status,409);const r=await good('/api/state','GET',undefined,{cookie:memberCookie,'oai-authenticated-user-id':(await good('/api/auth/me')).d.user.id});assert.equal(r.d.state,null);
 });
 test('Real account identities enforce teacher and student review roles on SQLite',async()=>{
  const owner=(await good('/api/state')).d.state.projects[0],room=(await good('/api/review-rooms','POST',{projectId:owner.id,versionId:owner.versions[0].id,title:'独立账号评审'})).d;
