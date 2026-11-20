@@ -30,7 +30,7 @@ export async function createStudioServer(options={}){
   const authResponse=await auth.handle(request);if(authResponse)return authResponse;
   if(u.pathname==='/signin-with-chatgpt')return new Response(null,{status:302,headers:{Location:'/login?return_to='+encodeURIComponent(safeReturn(u.searchParams.get('return_to'))),'Cache-Control':'no-store'}});
   const headers=new Headers(request.headers);for(const name of [...headers.keys()])if(name.toLowerCase().startsWith('oai-'))headers.delete(name);
-  const user=auth.user(request);const siteAdminResponse=await siteAiAdminApi(request,env,user,r=>auth.body(r));if(siteAdminResponse)return siteAdminResponse;if(user){headers.set('oai-authenticated-user-id',user.id);if(user.identityConfirmed)headers.set('oai-authenticated-user-email',user.email)}
+  const user=auth.user(request);const siteAdminResponse=await siteAiAdminApi(request,env,user,r=>auth.body(r));if(siteAdminResponse)return siteAdminResponse;if(user){headers.set('oai-authenticated-user-id',user.id);headers.set('oai-authenticated-user-name',encodeURIComponent(user.name));if(user.identityConfirmed)headers.set('oai-authenticated-user-email',user.email)}
   if(u.pathname.startsWith('/api/'))return api(new Request(request,{headers}),{...env,SITE_AI_ADMIN:user?.role==='admin'});
   if(!['GET','HEAD'].includes(request.method))return new Response('Method not allowed',{status:405,headers:{Allow:'GET, HEAD'}});
   let pathname;try{pathname=decodeURIComponent(u.pathname)}catch{return new Response('Invalid path',{status:400})}
