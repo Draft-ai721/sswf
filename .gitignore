@@ -22,3 +22,5 @@ data/
 *.sqlite-wal
 
 src/shared/
+
+artifacts/
