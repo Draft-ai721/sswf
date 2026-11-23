@@ -6,3 +6,43 @@
 /* Keep operational text readable on both canvas and assistant surfaces. */
 .studio-message,.studio-message p{font-size:14px;color:#334735}.studio-message.notice p{font-size:12px;color:#607252}.studio-message>small,.studio-assistant-title small,.studio-context span,.studio-send-scope,.studio-attachments button{font-size:11px;color:#627455}.studio-starts button,.studio-chat-bottom textarea{font-size:13px}.studio-quick-actions button,.studio-chat-bottom form>div>small{font-size:11px;color:#617451}.studio-header .save-status,.studio-header-actions button,.studio-header-actions a{font-size:12px;color:#566b4c}.studio-header-actions .studio-share{color:#fff}.studio-view-tools button,.studio-option-tabs a,.studio-option-tabs button,.studio-metric-bar,.studio-metric-bar button,.studio-bottom-tools button{font-size:12px;color:#5e744d}.studio-canvas-help{font-size:11px;color:#657758}.studio-object-tools label{font-size:11px;color:#607151}.studio-object-tools input,.studio-object-tools button{font-size:12px;color:#46613a}.studio-drawer p,.studio-drawer small,.studio-drawer label,.studio-process-link small{font-size:12px;color:#5b704c}.studio-drawer button,.studio-drawer input,.studio-drawer textarea,.studio-file-list b,.studio-process-link b,.studio-more-links a,.studio-more-links button{font-size:13px;color:#526e41}.studio-drawer .btn.primary{color:#fff}.studio-canvas-welcome>p{color:#6a7c5a}.studio button:focus-visible,.studio a:focus-visible{outline:2px solid #365f7e;outline-offset:2px}.studio-view-tools{flex-shrink:0}.studio-object-tools{flex-wrap:wrap;justify-content:center}
 @media(max-width:700px){.studio-header .studio-project-name{flex:1;min-width:65px;width:90px;max-width:150px;font-size:12px}.studio-header-actions{gap:1px}.studio-header-actions button,.studio-header-actions a{font-size:10px;padding:5px}.studio-header-actions .studio-share{font-size:10px}.studio-mobile-tabs button{font-size:12px}.studio-work-top{flex-wrap:wrap}.studio-option-tabs{max-width:100%;flex:1}.studio-view-tools button,.studio-option-tabs a,.studio-option-tabs button{font-size:11px}.studio-bottom-tools button,.studio-metric-bar,.studio-metric-bar button{font-size:11px}.studio-object-tools label,.studio-object-tools button{font-size:10px}.studio-object-tools input{font-size:12px}.studio-canvas-help{font-size:10px}.studio-object-tools{bottom:140px}.studio-drawer{top:94px}}
+
+[data-roof] { cursor: ns-resize; touch-action: none; }
+[data-roof]:focus-visible { stroke: #365f7e; stroke-width: 2; outline: none; }
+.plan-stroke { outline: none; }
+.plan-stroke .stroke-hit { cursor: grab; }
+.plan-stroke:active .stroke-hit { cursor: grabbing; }
+.plan-stroke:focus-visible .stroke-line { stroke: #b5622d; stroke-width: 3.5; }
+.studio-stroke-tools { font-size: 12px; color: #566b4c; }
+.studio-stroke-convert {
+  align-self: center;
+  border: 1px solid #a8bda0;
+  border-radius: 5px;
+  padding: 5px 10px;
+  color: #365c30;
+  background: #f6f9ee;
+}
+.studio-drawing > svg, .studio-drawing .sp-space { cursor: crosshair; }
+.studio-vertex { cursor: move; }
+.sp-space:focus > polygon { stroke: #365f7e; stroke-width: .18; }
+.studio-object-tools.studio-draw-tools {
+  position: static;
+  transform: none;
+  align-self: center;
+  min-width: 0;
+  margin-top: 4px;
+  font-size: 12px;
+}
+.studio-bottom-tools [aria-pressed="true"] { background: #e1ecda; color: #365c30; }
+.studio-conflict {
+  padding: 6px 14px;
+  background: #faeee1;
+  color: #784a31;
+  font-size: 12px;
+  text-align: center;
+}
+.draft-download {
+  margin-left: 6px;
+  color: inherit;
+  text-decoration: underline;
+}

@@ -1,11 +1,181 @@
-export const PLAN_COLORS=['#c6d8bc','#c9dce4','#e6d8b7','#dacbe0','#bcd9d1','#e6c8b9'];
-const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-export const round=v=>Math.round(v*100)/100;
-export const emptyPlan=()=>({width:30,depth:20,spaces:[]});
-export const planOf=o=>o?.plan||emptyPlan();
-export function edgeDistance(a,b){const dx=Math.max(0,a.x-b.x-b.width,b.x-a.x-a.width),dy=Math.max(0,a.y-b.y-b.depth,b.y-a.y-a.depth);return round(Math.hypot(dx,dy))}
-export function planMetrics(plan,program=[],relationships=[]){const overlaps=[],outside=[],counts=new Map(),areas=new Map();for(let i=0;i<plan.spaces.length;i++){const a=plan.spaces[i];counts.set(a.programId,(counts.get(a.programId)||0)+1);areas.set(a.programId,(areas.get(a.programId)||0)+a.width*a.depth);if(a.x<0||a.y<0||a.x+a.width>plan.width+.001||a.y+a.depth>plan.depth+.001)outside.push(a.id);for(let j=i+1;j<plan.spaces.length;j++){const b=plan.spaces[j];if(Math.min(a.x+a.width,b.x+b.width)-Math.max(a.x,b.x)>.001&&Math.min(a.y+a.depth,b.y+b.depth)-Math.max(a.y,b.y)>.001)overlaps.push([a.id,b.id])}}
-const requirements=program.map(p=>({id:p.id,name:p.name,required:p.count,placed:counts.get(p.id)||0,targetArea:round(p.count*p.area),actualArea:round(areas.get(p.id)||0),missing:Math.max(0,p.count-(counts.get(p.id)||0))}));const rules=relationships.map(r=>{const from=plan.spaces.filter(s=>s.programId===r.fromId),to=plan.spaces.filter(s=>s.programId===r.toId);const distance=from.length&&to.length?Math.min(...from.flatMap(a=>to.map(b=>edgeDistance(a,b)))):null;return {...r,actualDistance:distance,passed:distance===null?null:r.kind==='相邻'?distance<=r.distance:distance>=r.distance}});return {area:round(plan.spaces.reduce((n,s)=>n+s.width*s.depth,0)),canvasArea:round(plan.width*plan.depth),placed:plan.spaces.length,missing:requirements.reduce((n,r)=>n+r.missing,0),excess:requirements.reduce((n,r)=>n+Math.max(0,r.placed-r.required),0),overlaps,outside,requirements,rules}}
-export function validatePlan(value,program,{maxSpaces=80,bounded=false}={}){if(!value||!Number.isFinite(value.width)||value.width<1||value.width>1000||!Number.isFinite(value.depth)||value.depth<1||value.depth>1000||!Array.isArray(value.spaces)||value.spaces.length>maxSpaces)throw Error('空间推演数据无效。');const ids=new Set(),programIds=new Set(program.map(p=>p.id));const spaces=value.spaces.map(s=>{if(typeof s.id!=='string'||!/^[a-zA-Z0-9-]{1,80}$/.test(s.id)||ids.has(s.id)||!programIds.has(s.programId)||!['x','y','width','depth','height'].every(k=>typeof s[k]==='number'&&Number.isFinite(s[k]))||s.x<0||s.y<0||s.x>1000||s.y>1000||s.width<.5||s.depth<.5||s.width>1000||s.depth>1000||s.height<1||s.height>30)throw Error('空间尺寸或功能关联无效。');ids.add(s.id);if(bounded&&(s.x+s.width>value.width+.001||s.y+s.depth>value.depth+.001))throw Error('AI 布局超出了给定画布。');return {id:s.id,programId:s.programId,x:round(s.x),y:round(s.y),width:round(s.width),depth:round(s.depth),height:round(s.height),...(s.label?{label:String(s.label).slice(0,80)}:{})}});return {width:round(value.width),depth:round(value.depth),spaces}}
-export function planSvg(plan,program=[],{interactive=false,selected='',scope='plan',relationships=[],showLinks=true,resizable=false}={}){const m=planMetrics(plan,program,relationships),bad=new Set([...m.outside,...m.overlaps.flat()]),index=new Map(program.map((p,i)=>[p.id,i])),font=Math.max(.45,Math.min(1,plan.width/55)),pad=1.8;const links=showLinks?relationships.map(r=>{let a=null,b=null,distance=Infinity;for(const from of plan.spaces.filter(s=>s.programId===r.fromId))for(const to of plan.spaces.filter(s=>s.programId===r.toId)){const d=edgeDistance(from,to);if(d<distance){a=from;b=to;distance=d}}return a&&b?`<line x1="${a.x+a.width/2}" y1="${a.y+a.depth/2}" x2="${b.x+b.width/2}" y2="${b.y+b.depth/2}" stroke="${r.kind==='相邻'?'#4b7666':'#a88957'}" stroke-width=".12" stroke-dasharray=".4 .25"/>`:''}).join(''):'';return `<svg xmlns="http://www.w3.org/2000/svg" class="sp-plan-svg" viewBox="${-pad} ${-pad} ${plan.width+pad*2} ${plan.depth+pad*2}" role="img" aria-label="空间概念布局，${plan.width}米乘${plan.depth}米" ${interactive?'data-plan-canvas="1"':''}><defs><pattern id="grid-${esc(scope)}" width="1" height="1" patternUnits="userSpaceOnUse"><path d="M 1 0 L 0 0 0 1" fill="none" stroke="#dce3d8" stroke-width=".025"/></pattern></defs><rect width="${plan.width}" height="${plan.depth}" fill="#f9faf5" stroke="#97aa8d" stroke-width=".08"/><rect width="${plan.width}" height="${plan.depth}" fill="url(#grid-${esc(scope)})"/><text x="${plan.width/2}" y="-.5" text-anchor="middle" font-size="${font}" fill="#788470">${plan.width} m</text><text x="-.6" y="${plan.depth/2}" transform="rotate(-90 -.6 ${plan.depth/2})" text-anchor="middle" font-size="${font}" fill="#788470">${plan.depth} m</text>${plan.spaces.map((s,i)=>{const p=program.find(p=>p.id===s.programId),label=s.label||p?.name||'空间',color=PLAN_COLORS[(index.get(s.programId)||0)%PLAN_COLORS.length];return `<g ${interactive?`data-space-id="${esc(s.id)}" tabindex="0" role="button" aria-label="${esc(label)}，${s.width}乘${s.depth}米，可拖动或用方向键移动"`:''} class="sp-space ${selected===s.id?'selected':''}" transform="translate(${s.x} ${s.y})"><rect width="${s.width}" height="${s.depth}" rx=".12" fill="${color}" stroke="${bad.has(s.id)?'#bf6751':selected===s.id?'#365f7e':'#758c6b'}" stroke-width="${selected===s.id?.16:.08}"/><title>${esc(label)} · ${round(s.width*s.depth)} m² · ${s.height} m 高</title><text x="${s.width/2}" y="${s.depth/2-.2}" text-anchor="middle" font-size="${Math.min(font,s.width/Math.max(3,Math.min(label.length,12))*.8)}" fill="#2f4538" pointer-events="none">${esc(label.slice(0,12))}</text><text x="${s.width/2}" y="${s.depth/2+font}" text-anchor="middle" font-size="${Math.min(font*.8,s.width/9)}" fill="#65745c" pointer-events="none">${round(s.width*s.depth)} m²</text>${interactive&&resizable&&selected===s.id?`<rect class="studio-resize-hit" data-resize-space="${s.id}" x="${s.width-.6}" y="${s.depth-.6}" width="1.2" height="1.2" fill="transparent"/><circle class="studio-resize-handle" cx="${s.width}" cy="${s.depth}" r=".23" fill="#365f7e" stroke="white" stroke-width=".08" pointer-events="none"/>`:""}</g>`}).join('')}<g pointer-events="none">${links}</g></svg>`}
-export function axonSvg(plan,program=[]){const project=(x,y,z=0)=>[400+(x-y)*9,80+(x+y)*4.5-z*12],pol=points=>points.map(p=>project(...p).join(',')).join(' ');const all=[[0,0],[plan.width,0],[0,plan.depth],[plan.width,plan.depth]].map(p=>project(...p));for(const s of plan.spaces)for(const p of [[s.x,s.y,s.height],[s.x+s.width,s.y,s.height],[s.x,s.y+s.depth,s.height],[s.x+s.width,s.y+s.depth,s.height]])all.push(project(...p));const minX=Math.min(...all.map(p=>p[0]))-35,minY=Math.min(...all.map(p=>p[1]))-35,width=Math.max(...all.map(p=>p[0]))-minX+35,height=Math.max(...all.map(p=>p[1]))-minY+50;return `<svg xmlns="http://www.w3.org/2000/svg" class="sp-plan-svg" viewBox="${minX} ${minY} ${width} ${height}" role="img" aria-label="由空间块尺寸生成的概念体块预览"><polygon points="${pol([[0,0,0],[plan.width,0,0],[plan.width,plan.depth,0],[0,plan.depth,0]])}" fill="#edf1e7" stroke="#bac9ae"/>${[...plan.spaces].sort((a,b)=>(a.x+a.y)-(b.x+b.y)).map(s=>{const color=PLAN_COLORS[Math.max(0,program.findIndex(p=>p.id===s.programId))%PLAN_COLORS.length],x=s.x,y=s.y,w=s.width,d=s.depth,h=s.height;return `<g stroke="#7c8f72" stroke-width=".6"><polygon points="${pol([[x,y+d,0],[x+w,y+d,0],[x+w,y+d,h],[x,y+d,h]])}" fill="${color}"/><polygon points="${pol([[x+w,y,0],[x+w,y+d,0],[x+w,y+d,h],[x+w,y,h]])}" fill="${color}" opacity=".65"/><polygon points="${pol([[x,y,h],[x+w,y,h],[x+w,y+d,h],[x,y+d,h]])}" fill="${color}"/><title>${esc(program.find(p=>p.id===s.programId)?.name||'空间')} · 高 ${h} m</title></g>`}).join('')}</svg>`}
+import {areaOf, boundsOf, edgeDistance, footprintOf, interiorPointOf, isPolygon, outsidePlan, overlapsSpace, round, validateVertices} from './plan-geometry.js';
+export {areaOf, edgeDistance, round};
+import {validateStrokes} from './plan-geometry.js';
+
+export const PLAN_COLORS = ['#c6d8bc','#c9dce4','#e6d8b7','#dacbe0','#bcd9d1','#e6c8b9'];
+const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+export const emptyPlan = () => ({width:30, depth:20, spaces:[]});
+export const planOf = option => option?.plan || emptyPlan();
+
+function closestPair(spaces, rule) {
+  let distance = Infinity, pair = null;
+  for (const a of spaces.filter(s => s.programId === rule.fromId)) {
+    for (const b of spaces.filter(s => s.programId === rule.toId)) {
+      const gap = edgeDistance(a,b);
+      if (gap < distance) {
+        distance = gap;
+        pair = {a,b,distance};
+      }
+    }
+  }
+  return pair;
+}
+
+export function planMetrics(plan, program = [], relationships = []) {
+  const overlaps = [], outside = [], counts = new Map(), areas = new Map();
+  let area = 0;
+  for (let i = 0; i < plan.spaces.length; i++) {
+    const a = plan.spaces[i], spaceArea = areaOf(a);
+    area += spaceArea;
+    counts.set(a.programId, (counts.get(a.programId) || 0) + 1);
+    areas.set(a.programId, (areas.get(a.programId) || 0) + spaceArea);
+    if (outsidePlan(a, plan)) outside.push(a.id);
+    for (let j = i+1; j < plan.spaces.length; j++) {
+      const b = plan.spaces[j];
+      if (overlapsSpace(a,b)) overlaps.push([a.id,b.id]);
+    }
+  }
+  const requirements = program.map(p => ({
+    id:p.id, name:p.name, required:p.count, placed:counts.get(p.id)||0,
+    targetArea:round(p.count*p.area), actualArea:round(areas.get(p.id)||0),
+    missing:Math.max(0,p.count-(counts.get(p.id)||0))
+  }));
+  const rules = relationships.map(rule => {
+    const distance = closestPair(plan.spaces, rule)?.distance ?? null;
+    return {...rule, actualDistance:distance, passed:distance===null ? null :
+      rule.kind==='相邻' ? distance<=rule.distance : distance>=rule.distance};
+  });
+  return {area:round(area), canvasArea:round(plan.width*plan.depth), placed:plan.spaces.length,
+    missing:requirements.reduce((n,r) => n+r.missing,0),
+    excess:requirements.reduce((n,r) => n+Math.max(0,r.placed-r.required),0),
+    overlaps, outside, requirements, rules};
+}
+
+const validNumber = (value, min, max) => Number.isFinite(value) && value >= min && value <= max;
+const rectFields = ['x','y','width','depth'];
+function validateFootprint(space) {
+  if ('geometry' in space) {
+    if (!isPolygon(space) || rectFields.some(key => key in space)) throw Error('空间只能使用一种轮廓格式。');
+    return {geometry:{kind:'polygon', vertices:validateVertices(space.geometry.vertices)}};
+  }
+  if (!validNumber(space.x,0,1000) || !validNumber(space.y,0,1000) ||
+      !validNumber(space.width,.5,1000) || !validNumber(space.depth,.5,1000)) throw Error('空间尺寸无效。');
+  return Object.fromEntries(rectFields.map(key => [key,round(space[key])]));
+}
+
+export function validatePlan(value, program, {maxSpaces=80, bounded=false} = {}) {
+  if (!value || !validNumber(value.width,1,1000) || !validNumber(value.depth,1,1000) ||
+      !Array.isArray(value.spaces) || value.spaces.length > maxSpaces) throw Error('空间推演数据无效。');
+  const ids = new Set(), programIds = new Set(program.map(p => p.id));
+  const spaces = Array.from(value.spaces, space => {
+    if (!space || typeof space.id !== 'string' || !/^[a-zA-Z0-9-]{1,80}$/.test(space.id) ||
+        ids.has(space.id) || !programIds.has(space.programId) || !validNumber(space.height,1,30)) {
+      throw Error('空间尺寸或功能关联无效。');
+    }
+    ids.add(space.id);
+    const footprint = validateFootprint(space);
+    const result = {id:space.id, programId:space.programId, ...footprint, height:round(space.height)};
+    if (space.label) result.label = String(space.label).slice(0,80);
+    if (bounded && (outsidePlan(space, value) || outsidePlan(result, {width:round(value.width),depth:round(value.depth)}))) {
+      throw Error('AI 布局超出了给定画布。');
+    }
+    return result;
+  });
+  const strokes=value.strokes===undefined?[]:validateStrokes(value.strokes);
+  return {width:round(value.width), depth:round(value.depth), spaces, ...(strokes.length?{strokes}:{})};
+}
+
+function spaceSvg(space, program, bad, font, {interactive, selected, resizable}) {
+  const index = program.findIndex(p => p.id === space.programId);
+  const label = space.label || program[index]?.name || '空间';
+  const polygon = isPolygon(space);
+  const {x,y,width,depth} = boundsOf(space);
+  const [centerX,centerY] = interiorPointOf(space), labelX = centerX-x, labelY = centerY-y;
+  const area = round(areaOf(space));
+  const fill = PLAN_COLORS[Math.max(0,index) % PLAN_COLORS.length];
+  const stroke = bad.has(space.id) ? '#bf6751' : selected ? '#365f7e' : '#758c6b';
+  const paint = `fill="${fill}" stroke="${stroke}" stroke-width="${selected ? .16 : .08}"`;
+  const points = polygon ? footprintOf(space).map(([vx,vy]) => [round(vx-x),round(vy-y)]) : [];
+  const shape = polygon ? `<polygon points="${points.map(p => p.join(',')).join(' ')}" ${paint}/>` :
+    `<rect width="${width}" height="${depth}" rx=".12" ${paint}/>`;
+  const controls = !interactive || !resizable || !selected ? '' : polygon ? points.map(([vx,vy],i) =>
+    `<circle class="studio-vertex" data-vertex-index="${i}" cx="${vx}" cy="${vy}" r=".32" fill="#365f7e" stroke="white" stroke-width=".08"/>`).join('') :
+    `<rect class="studio-resize-hit" data-resize-space="${space.id}" x="${width-.6}" y="${depth-.6}" width="1.2" height="1.2" fill="transparent"/><circle class="studio-resize-handle" cx="${width}" cy="${depth}" r=".23" fill="#365f7e" stroke="white" stroke-width=".08" pointer-events="none"/>`;
+  const description = polygon ? `多边形，${area} 平方米` : `${width}乘${depth}米，可拖动或用方向键移动`;
+  const interaction = interactive ? `data-space-id="${esc(space.id)}" tabindex="0" role="button" aria-label="${esc(label)}，${description}"` : '';
+  return `<g ${interaction} class="sp-space ${selected?'selected':''}" transform="translate(${x} ${y})">${shape}
+    <title>${esc(label)} · ${area} m² · ${space.height} m 高</title>
+    <text x="${labelX}" y="${labelY-.2}" text-anchor="middle" font-size="${Math.min(font,width/Math.max(3,Math.min(label.length,12))*.8)}" fill="#2f4538" pointer-events="none">${esc(label.slice(0,12))}</text>
+    <text x="${labelX}" y="${labelY+font}" text-anchor="middle" font-size="${Math.min(font*.8,width/9)}" fill="#65745c" pointer-events="none">${area} m²</text>${controls}</g>`;
+}
+
+export function planSvg(plan, program = [], {interactive=false, selected='', selectedStroke='', scope='plan', relationships=[], showLinks=true, resizable=false} = {}) {
+  const metrics = planMetrics(plan), bad = new Set([...metrics.outside,...metrics.overlaps.flat()]);
+  const font = Math.max(.45,Math.min(1,plan.width/55)), pad = 1.8;
+  const links = showLinks ? relationships.map(rule => {
+    const pair = closestPair(plan.spaces,rule);
+    if (!pair) return '';
+    const [ax,ay] = interiorPointOf(pair.a), [bx,by] = interiorPointOf(pair.b);
+    return `<line x1="${ax}" y1="${ay}" x2="${bx}" y2="${by}" stroke="${rule.kind==='相邻'?'#4b7666':'#a88957'}" stroke-width=".12" stroke-dasharray=".4 .25"/>`;
+  }).join('') : '';
+  return `<svg xmlns="http://www.w3.org/2000/svg" class="sp-plan-svg" viewBox="${-pad} ${-pad} ${plan.width+pad*2} ${plan.depth+pad*2}" role="img" aria-label="空间概念布局，${plan.width}米乘${plan.depth}米" ${interactive?'data-plan-canvas="1"':''}>
+    <defs><pattern id="grid-${esc(scope)}" width="1" height="1" patternUnits="userSpaceOnUse"><path d="M 1 0 L 0 0 0 1" fill="none" stroke="#dce3d8" stroke-width=".025"/></pattern></defs>
+    <rect width="${plan.width}" height="${plan.depth}" fill="#f9faf5" stroke="#97aa8d" stroke-width=".08"/>
+    <rect width="${plan.width}" height="${plan.depth}" fill="url(#grid-${esc(scope)})"/>
+    <text x="${plan.width/2}" y="-.5" text-anchor="middle" font-size="${font}" fill="#788470">${plan.width} m</text>
+    <text x="-.6" y="${plan.depth/2}" transform="rotate(-90 -.6 ${plan.depth/2})" text-anchor="middle" font-size="${font}" fill="#788470">${plan.depth} m</text>
+    ${plan.spaces.map(s => spaceSvg(s,program,bad,font,{interactive,selected:selected===s.id,resizable})).join('')}
+    <g pointer-events="none">${links}</g>
+    <g class="plan-ink" pointer-events="none" fill="none" stroke="#385d82" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">${(plan.strokes||[]).map((stroke,index)=>{
+      const points=esc(stroke.points.map(p=>p.join(',')).join(' '));
+      const active=selectedStroke===stroke.id;
+      const attributes=interactive?`data-stroke-id="${esc(stroke.id)}" tabindex="0" role="button" aria-label="手绘线 ${index+1}" aria-pressed="${active}"`:'';
+      return `<g ${attributes} class="plan-stroke${active?' selected':''}">
+        <polyline class="stroke-line" vector-effect="non-scaling-stroke" points="${points}" ${active?'stroke="#b5622d" stroke-width="3.5"':''}/>
+        ${interactive?`<polyline class="stroke-hit" vector-effect="non-scaling-stroke" points="${points}" stroke="transparent" stroke-width="16" pointer-events="stroke"/>`:''}
+      </g>`;
+    }).join('')}</g></svg>`;
+}
+
+export const AXON_HEIGHT_SCALE = 12;
+const project = (x,y,z=0) => [400+(x-y)*9,80+(x+y)*4.5-z*AXON_HEIGHT_SCALE];
+const pol = points => points.map(p => project(...p).map(round).join(',')).join(' ');
+
+export function axonFaces(space, program, {interactive=false, selected=''}={}) {
+  const points = footprintOf(space);
+  const index = program.findIndex(p=>p.id===space.programId);
+  const color = PLAN_COLORS[Math.max(0,index)%PLAN_COLORS.length], h = space.height;
+  const label = esc(space.label||program[index]?.name||'空间');
+  const winding = points.reduce((sum,[x,y],i)=>{
+    const [nx,ny]=points[(i+1)%points.length];
+    return sum+x*ny-y*nx;
+  },0);
+  const boundary=winding<0?[...points].reverse():points;
+  const sides=boundary.map((a,i)=>[a,boundary[(i+1)%boundary.length]])
+    .filter(([[ax,ay],[bx,by]])=>by-ay>bx-ax)
+    .map(([a,b])=>`<polygon points="${pol([a,b,[...b,h],[...a,h]])}" fill="${color}" opacity="${b[1]>a[1]?'.65':'1'}"/>`).join('');
+  const handle=interactive?`data-roof="${esc(space.id)}" tabindex="0" role="slider" aria-label="${label}高度（米）" aria-valuemin="1" aria-valuemax="30" aria-valuenow="${h}"`:'';
+  const [cx,cy]=project(...interiorPointOf(space),h);
+  const active=interactive&&selected===space.id;
+  return `${sides}<polygon points="${pol(boundary.map(p=>[...p,h]))}" fill="${color}" ${handle} ${active?'stroke="#365f7e" stroke-width="1.6"':''}/>
+    ${active?`<text x="${cx}" y="${cy}" text-anchor="middle" pointer-events="none" fill="#254537" stroke="none" font-size="8">${h} m</text>`:''}
+    <title>${label} · 高 ${h} m</title>`;
+}
+
+export function axonSvg(plan, program = [], options={}) {
+  const ground = [[0,0],[plan.width,0],[plan.width,plan.depth],[0,plan.depth]];
+  const solids = plan.spaces.map(space => {
+    const points = footprintOf(space);
+    const bounds = boundsOf(space);
+    return {space, points, order:bounds.x+bounds.y};
+  }).sort((a,b) => a.order-b.order);
+  const all = ground.map(p => project(...p));
+  for (const {space,points} of solids) {
+    for (const p of points) all.push(project(...p),project(...p,space.height));
+  }
+  const minX = Math.min(...all.map(p=>p[0]))-35, minY = Math.min(...all.map(p=>p[1]))-35;
+  const width = Math.max(...all.map(p=>p[0]))-minX+35, height = Math.max(...all.map(p=>p[1]))-minY+50;
+  const shapes = solids.map(({space})=>
+    `<g stroke="#7c8f72" stroke-width=".6" ${options.interactive?`data-solid="${esc(space.id)}"`:''}>${axonFaces(space,program,options)}</g>`).join('');
+  return `<svg xmlns="http://www.w3.org/2000/svg" class="sp-plan-svg" viewBox="${minX} ${minY} ${width} ${height}" role="img" aria-label="空间概念体块预览"><polygon points="${pol(ground)}" fill="#edf1e7" stroke="#bac9ae"/>${shapes}</svg>`;
+}
