@@ -1,3 +1,5 @@
+import {modelSnapshot} from './models.js';
+
 // Final submissions have their own immutable work, independent of editable projects.
 export async function createFinalSubmission(bucket, prefix, data, state, reject) {
   const title = typeof data.title === 'string' && data.title.trim();
@@ -21,7 +23,7 @@ export async function createFinalSubmission(bucket, prefix, data, state, reject)
       ids.add(item.id);
       const obj = await bucket.head(prefix+'files/'+item.id);
       const meta = obj?.customMetadata;
-      if (meta?.purpose !== 'final' || !['jpg','png','pdf'].includes(meta.type)) throw reject('材料不属于本次可提交的作品。');
+      if (meta?.purpose !== 'final' || !['jpg','png','pdf','skp'].includes(meta.type)) throw reject('材料不属于本次可提交的作品。');
       const extractedText = typeof item.extractedText === 'string' && meta.type === 'pdf' ? item.extractedText.slice(0,12000) : '';
       let previewId=null;
       if(item.previewId){
@@ -30,7 +32,8 @@ export async function createFinalSubmission(bucket, prefix, data, state, reject)
         if(cover?.customMetadata?.purpose!=='final'||cover.customMetadata.parentId!==item.id||cover.customMetadata.type!=='jpg'||cover.customMetadata.page!=='1')throw reject('预览页与原文件不符。');
         previewId=item.previewId;
       }
-      files.push({id:item.id, type:meta.type, name:decodeURIComponent(meta.name), extractedText,...(previewId?{previewId}:{})});
+      const conversion=meta.type==='skp'?await modelSnapshot(bucket,prefix,item.id):null;
+      files.push({...(conversion?{conversion}:{}),id:item.id, type:meta.type, name:decodeURIComponent(meta.name), extractedText,...(previewId?{previewId}:{})});
     }
   }
   const id = crypto.randomUUID(), createdAt = new Date().toISOString();

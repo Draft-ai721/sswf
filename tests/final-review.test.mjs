@@ -110,3 +110,32 @@ test('Final AI reviews use submitted evidence, are billed once per request, and 
     assert.equal((await call('other','/api/ai/runs/final-ai')).status,404);
   }finally{globalThis.fetch=originalFetch}
 });
+
+test('SKP final reviews capture server conversion, authorize shared models and freeze a recovered result',async()=>{
+  const bucket=new Bucket(),env={BUCKET:bucket};
+  async function request(user,path,method='GET',body,etag){
+    return api(new Request('https://studio.test'+path,{method,headers:{'oai-authenticated-user-id':user,'oai-authenticated-user-email':user+'@example.test',...(etag?{'If-Match':etag}:{})},body:body===undefined?undefined:body instanceof Uint8Array?body:JSON.stringify(body)}),env);
+  }
+  async function good(...args){const r=await request(...args),data=await r.json();assert.ok(r.ok,JSON.stringify(data));return data}
+  const file=(await good('student','/api/final-files?name=work.skp','POST',new TextEncoder().encode('real upload kept'))).file;
+  assert.equal(file.type,'skp');
+  const model=await good('student','/api/models/'+file.id);
+  assert.equal(model.model.status,'uploaded');
+  const submitted=await good('student','/api/review-rooms','POST',{kind:'final',title:'模型',files:[{id:file.id,conversion:{status:'ready',resultId:'forged'}}]});
+  const path='/api/review-rooms/'+submitted.room.id;
+  assert.equal(submitted.room.version.snapshot.files[0].conversion.status,'uploaded');
+  assert.equal((await request('other',path+'/refresh-model','POST',{fileId:file.id},submitted.etag)).status,403);
+  const recovered={fileId:file.id,status:'ready',resultId:'converted-one'};
+  await bucket.put('users/student/models/'+file.id+'/status.json',JSON.stringify(recovered));
+  await bucket.put('users/student/models/'+file.id+'/results/converted-one.glb',new Uint8Array([1,2,3]));
+  const refreshed=await good('student',path+'/refresh-model','POST',{fileId:file.id},submitted.etag);
+  assert.equal(refreshed.room.version.snapshot.files[0].conversion.resultId,'converted-one');
+  await bucket.put('users/student/models/'+file.id+'/status.json',JSON.stringify({...recovered,resultId:'converted-two'}));
+  const again=await good('student',path+'/refresh-model','POST',{fileId:file.id},refreshed.etag);
+  assert.equal(again.room.version.snapshot.files[0].conversion.resultId,'converted-one');
+  const invite=await good('student',path+'/invites','POST',{role:'reviewer',perspective:'教师',email:'teacher@example.test',days:7},again.etag);
+  await good('teacher','/api/review-rooms/accept','POST',{token:invite.inviteUrl.split('/invite/')[1]});
+  assert.equal((await request('teacher',path+'/models/'+file.id)).status,200);
+  assert.equal((await request('other',path+'/models/'+file.id)).status,403);
+  assert.equal(bucket.data.has('users/student/state.json'),false);
+});

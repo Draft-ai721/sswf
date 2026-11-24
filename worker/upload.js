@@ -7,7 +7,7 @@ export async function uploadMaterial(request, url, bucket, prefix, {readState,li
   const ext = name.split('.').pop().toLowerCase();
   if (!/^[a-zA-Z0-9-]{1,80}$/.test(project || '') || !name || name.length > 200) return fail('文件信息无效。');
   const type = ext === 'jpeg' ? 'jpg' : ext;
-  if (!['pdf','jpg','png',...(final?[]:['skp'])].includes(type)) return fail(final?'终评支持 PDF、JPG 与 PNG。':'支持 SKP、PDF、JPG 与 PNG 文件。');
+  if (!['pdf','jpg','png','skp'].includes(type)) return fail(final?'终评支持 SKP、PDF、JPG 与 PNG。':'支持 SKP、PDF、JPG 与 PNG 文件。');
   const state = final ? null : (await readState()).state;
   const draft = state?.projects.find(p=>p.id===project);
   if (!final && !draft) return fail('请先保存项目，再上传材料。',404);

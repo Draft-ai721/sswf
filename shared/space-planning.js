@@ -138,10 +138,17 @@ export function planSvg(plan, program = [], {interactive=false, selected='', sel
 }
 
 export const AXON_HEIGHT_SCALE = 12;
-const project = (x,y,z=0) => [400+(x-y)*9,80+(x+y)*4.5-z*AXON_HEIGHT_SCALE];
+export function axonProjection(camera={}) {
+  const yaw=camera.yaw??Math.PI/4, pitch=camera.pitch??Math.PI/6;
+  return (x,y,z=0)=>[400+Math.SQRT2*9*(x*Math.cos(yaw)-y*Math.sin(yaw)),
+    80+Math.SQRT2*9*Math.sin(pitch)*(x*Math.sin(yaw)+y*Math.cos(yaw))-z*axonHeightScale(camera)];
+}
+export function axonHeightScale(camera={}) {return AXON_HEIGHT_SCALE*Math.cos(camera.pitch??Math.PI/6)/Math.cos(Math.PI/6)}
+const project=axonProjection();
 const pol = points => points.map(p => project(...p).map(round).join(',')).join(' ');
 
-export function axonFaces(space, program, {interactive=false, selected=''}={}) {
+export function axonFaces(space, program, {interactive=false, selected='',camera}={}) {
+  const project=axonProjection(camera),pol=points=>points.map(p=>project(...p).map(round).join(',')).join(' ');
   const points = footprintOf(space);
   const index = program.findIndex(p=>p.id===space.programId);
   const color = PLAN_COLORS[Math.max(0,index)%PLAN_COLORS.length], h = space.height;
@@ -152,7 +159,7 @@ export function axonFaces(space, program, {interactive=false, selected=''}={}) {
   },0);
   const boundary=winding<0?[...points].reverse():points;
   const sides=boundary.map((a,i)=>[a,boundary[(i+1)%boundary.length]])
-    .filter(([[ax,ay],[bx,by]])=>by-ay>bx-ax)
+    .filter(([a,b])=>project(...b)[0]<project(...a)[0])
     .map(([a,b])=>`<polygon points="${pol([a,b,[...b,h],[...a,h]])}" fill="${color}" opacity="${b[1]>a[1]?'.65':'1'}"/>`).join('');
   const handle=interactive?`data-roof="${esc(space.id)}" tabindex="0" role="slider" aria-label="${label}高度（米）" aria-valuemin="1" aria-valuemax="30" aria-valuenow="${h}"`:'';
   const [cx,cy]=project(...interiorPointOf(space),h);
@@ -163,11 +170,13 @@ export function axonFaces(space, program, {interactive=false, selected=''}={}) {
 }
 
 export function axonSvg(plan, program = [], options={}) {
+  const project=axonProjection(options.camera),pol=points=>points.map(p=>project(...p).map(round).join(',')).join(' ');
+  const yaw=options.camera?.yaw??Math.PI/4;
   const ground = [[0,0],[plan.width,0],[plan.width,plan.depth],[0,plan.depth]];
   const solids = plan.spaces.map(space => {
     const points = footprintOf(space);
     const bounds = boundsOf(space);
-    return {space, points, order:bounds.x+bounds.y};
+    return {space, points, order:(bounds.x+bounds.width/2)*Math.sin(yaw)+(bounds.y+bounds.depth/2)*Math.cos(yaw)};
   }).sort((a,b) => a.order-b.order);
   const all = ground.map(p => project(...p));
   for (const {space,points} of solids) {

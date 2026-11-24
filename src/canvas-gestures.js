@@ -1,4 +1,4 @@
-import {axonFaces, AXON_HEIGHT_SCALE, round} from '../shared/space-planning.js';
+import {axonSvg,axonFaces,axonHeightScale,round} from '../shared/space-planning.js';
 import {MAX_STROKE_POINTS} from '../shared/plan-geometry.js';
 
 const localPoint=(svg,e)=>new DOMPoint(e.clientX,e.clientY).matrixTransform(svg.getScreenCTM().inverse());
@@ -118,9 +118,9 @@ export function mountPen(svg,plan,commit,render){
   return cancel;
 }
 
-export function mountExtrusion(svg,plan,program,{select,commit,render}){
+export function mountExtrusion(svg,plan,program,{select,commit,render,camera}){
   let drag=null;
-  const heightAt=e=>Math.max(1,Math.min(30,Math.round((drag.space.height+(drag.startY-localPoint(svg,e).y)/AXON_HEIGHT_SCALE)*10)/10));
+  const heightAt=e=>Math.max(1,Math.min(30,Math.round((drag.space.height+(drag.startY-localPoint(svg,e).y)/axonHeightScale(camera))*10)/10));
   svg.addEventListener('pointerdown',e=>{
     const roof=e.target.closest('[data-roof]');
     if(!roof||drag||e.button!==0||!e.isPrimary)return;
@@ -135,7 +135,7 @@ export function mountExtrusion(svg,plan,program,{select,commit,render}){
   svg.addEventListener('pointermove',e=>{
     if(drag?.id!==e.pointerId||Math.abs(e.clientY-drag.clientY)<2&&!drag.moved)return;
     drag.moved=true;
-    drag.group.innerHTML=axonFaces({...drag.space,height:heightAt(e)},program,{interactive:true,selected:drag.space.id});
+    drag.group.innerHTML=axonFaces({...drag.space,height:heightAt(e)},program,{interactive:true,selected:drag.space.id,camera});
   });
   svg.addEventListener('pointerup',e=>{
     if(drag?.id!==e.pointerId)return;
@@ -159,4 +159,35 @@ export function mountExtrusion(svg,plan,program,{select,commit,render}){
     select(space.id);
     Promise.resolve(commit(space.id,height)).then(()=>document.querySelector('[data-roof="'+space.id+'"]')?.focus());
   });
+}
+
+export function mountMassOrbit(svg,plan,program,camera,selection,render) {
+  let drag=null;
+  function paint(){
+    const template=new DOMParser().parseFromString(axonSvg(plan,program,{interactive:true,selected:selection(),camera}),'image/svg+xml').documentElement;
+    const [x,y,w,h]=template.getAttribute('viewBox').split(' ').map(Number);
+    svg.innerHTML=template.innerHTML;
+    svg.setAttribute('viewBox',[x+w*(1-1/camera.zoom)/2+camera.panX,y+h*(1-1/camera.zoom)/2+camera.panY,w/camera.zoom,h/camera.zoom].join(' '));
+    svg.dataset.yaw=camera.yaw;svg.dataset.pitch=camera.pitch;svg.dataset.zoom=camera.zoom;
+  }
+  paint();
+  svg.style.touchAction='none';
+  svg.addEventListener('contextmenu',e=>e.preventDefault());
+  svg.addEventListener('pointerdown',e=>{
+    if(drag||!e.isPrimary||![0,1,2].includes(e.button))return;
+    if(e.button===0&&!e.shiftKey&&e.target.closest('[data-roof]'))return;
+    e.preventDefault();e.stopImmediatePropagation();
+    drag={id:e.pointerId,x:e.clientX,y:e.clientY,pan:e.button!==0};
+    svg.dataset.gestureRoute=location.hash;svg.setPointerCapture(e.pointerId);
+  });
+  svg.addEventListener('pointermove',e=>{
+    if(drag?.id!==e.pointerId)return;
+    const dx=e.clientX-drag.x,dy=e.clientY-drag.y;drag.x=e.clientX;drag.y=e.clientY;
+    if(drag.pan){const box=svg.viewBox.baseVal;camera.panX-=dx*box.width/svg.clientWidth;camera.panY-=dy*box.height/svg.clientHeight}
+    else{camera.yaw+=dx*.012;camera.pitch=Math.max(.12,Math.min(1.4,camera.pitch+dy*.008))}
+    paint();
+  });
+  function finish(e){if(drag?.id!==e.pointerId)return;drag=null;releaseGesture(svg,render)}
+  svg.addEventListener('pointerup',finish);svg.addEventListener('pointercancel',finish);svg.addEventListener('lostpointercapture',finish);
+  svg.addEventListener('wheel',e=>{e.preventDefault();if(svg.dataset.gestureRoute)return;camera.zoom=Math.max(.2,Math.min(8,camera.zoom*Math.exp(-e.deltaY*.001)));paint()},{passive:false});
 }

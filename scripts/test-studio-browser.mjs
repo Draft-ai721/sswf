@@ -8,9 +8,9 @@ const qaOut=resolve(process.env.STUDIO_QA_OUT||'artifacts/studio-qa');await mkdi
 const realFetch=globalThis.fetch,wait=ms=>new Promise(r=>setTimeout(r,ms)),origin='http://localhost:3187',dir=await mkdtemp(join(tmpdir(),'studio-browser-')),token='browser-bootstrap-'.repeat(4);let lastContext;let app,chrome,ws,cookie='',counter=0,mode='ok',pending,release,modelCalls=0,errors=[];const outcomes=[];
 const api=async(path,method='GET',body)=>{const r=await realFetch(origin+path,{method,headers:{Origin:origin,cookie,...(body?{'Content-Type':'application/json'}:{})},body:body===undefined?undefined:JSON.stringify(body)});const d=await r.json();assert.ok(r.ok,JSON.stringify(d));return d};
 globalThis.fetch=async(url,options)=>{if(String(url).startsWith('https://api.deepseek.com/')){if(String(url).endsWith('/models'))return Response.json({data:[{id:'deepseek-chat'}]});modelCalls++;const content=JSON.parse(options.body).messages[1].content;lastContext=JSON.parse(typeof content==='string'?content:content[0].text);if(lastContext.projectId?.startsWith('final-')){const source=lastContext.sources.find(s=>s.readStatus==='text-extraction');assert.ok(source);return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify({summary:'建议补充入口图。',comments:[{title:'核对入口动线',dimension:'论据支撑',priority:0,sourceId:source.id,quote:'Community reading pavilion',kind:'依据不足',evidence:'提交材料中有阅览亭说明。',need:'请补动线图。',suggestion:'标出访客入口。',question:'从哪里到达？'}]})}}],usage:{prompt_tokens:20,completion_tokens:20}})}if(mode==='pending')await new Promise(r=>release=r);if(mode==='failure')return Response.json({error:{message:'mock unavailable'}},{status:429});return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify({message:'建议增加共享阅读与交流空间，请结合任务书判断。',actions:[{type:'add_space',name:'AI阅读区',area:15},{type:'add_space',name:'AI交流区',area:10}],questions:[]})}}],usage:{prompt_tokens:50,completion_tokens:80}})}return realFetch(url,options)};
-const inflight=new Map();function cdp(method,params={}){return new Promise((resolve,reject)=>{const id=++counter;inflight.set(id,{resolve,reject});ws.send(JSON.stringify({id,method,params}))})}async function js(expression){const r=await cdp('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw Error(r.exceptionDetails.text+': '+r.exceptionDetails.exception?.description);return r.result.value}async function until(fn,label){for(let i=0;i<120;i++){if(await fn())return;await wait(75)}throw Error('Timeout: '+label)}const click=selector=>js(`document.querySelector(${JSON.stringify(selector)}).click()`),state=()=>api('/api/state');let pid;async function p(){return (await state()).state.projects.find(p=>p.id===pid)}const count=async()=> (await p()).workflow.options.flatMap(o=>o.plan.spaces).length;const space=async()=> (await p()).workflow.options[0].plan.spaces[0];const chat=async text=>{await js(`(()=>{const el=document.querySelector('#studio-chat-input');el.value=${JSON.stringify(text)};el.dispatchEvent(new Event('input',{bubbles:true}));el.form.requestSubmit()})()`)};async function screenshot(name){const r=await cdp('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});await writeFile(qaOut+'/'+name+'.png',Buffer.from(r.data,'base64'))}async function settled(){await until(()=>js(`document.querySelector('.save-status')?.textContent.includes('已保存')`),'cloud save')}
+const inflight=new Map();function cdp(method,params={}){return new Promise((resolve,reject)=>{const id=++counter;inflight.set(id,{resolve,reject});ws.send(JSON.stringify({id,method,params}))})}async function js(expression){const r=await cdp('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw Error(r.exceptionDetails.text+': '+r.exceptionDetails.exception?.description);return r.result.value}async function until(fn,label){for(let i=0;i<600;i++){if(await fn())return;await wait(75)}throw Error('Timeout: '+label)}const click=selector=>js(`document.querySelector(${JSON.stringify(selector)}).click()`),state=()=>api('/api/state');let pid;async function p(){return (await state()).state.projects.find(p=>p.id===pid)}const count=async()=> (await p()).workflow.options.flatMap(o=>o.plan.spaces).length;const space=async()=> (await p()).workflow.options[0].plan.spaces[0];const chat=async text=>{await js(`(()=>{const el=document.querySelector('#studio-chat-input');el.value=${JSON.stringify(text)};el.dispatchEvent(new Event('input',{bubbles:true}));el.form.requestSubmit()})()`)};async function screenshot(name){const r=await cdp('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});await writeFile(qaOut+'/'+name+'.png',Buffer.from(r.data,'base64'))}async function settled(){await until(()=>js(`document.querySelector('.save-status')?.textContent.includes('已保存')`),'cloud save')}
 try{app=await createStudioServer({dataDir:dir,origin,bootstrapToken:token,publicDir:resolve('dist/public')});await new Promise(r=>app.server.listen(3187,r));const setup=await realFetch(origin+'/api/auth/setup',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({token,email:'qa@example.test',name:'测试学生',password:'browser-password-123'})});cookie=setup.headers.get('set-cookie').split(';')[0];await api('/api/admin/ai','POST',{apiKey:'test-browser-key-1234567890',enabled:true,userDailyLimit:20,siteDailyLimit:30});
-chrome=spawn(process.env.CHROME_BIN||'/usr/bin/chromium',['--headless','--no-sandbox','--disable-dev-shm-usage','--disable-gpu','--no-first-run','--disable-popup-blocking','--remote-debugging-port=0','--user-data-dir='+dir+'/chrome','--window-size=1440,1000','about:blank'],{stdio:'ignore'});let target;await until(async()=>{try{const port=(await readFile(join(dir,'chrome','DevToolsActivePort'),'utf8')).split(/\r?\n/)[0];target=(await (await realFetch('http://127.0.0.1:'+port+'/json')).json()).find(t=>t.type==='page');return !!target}catch{return false}},'browser start');ws=new WebSocket(target.webSocketDebuggerUrl);await new Promise(r=>ws.addEventListener('open',r,{once:true}));ws.addEventListener('message',e=>{const m=JSON.parse(e.data);if(m.id&&inflight.has(m.id)){const q=inflight.get(m.id);inflight.delete(m.id);m.error?q.reject(Error(JSON.stringify(m.error))):q.resolve(m.result)}else if(m.method==='Runtime.exceptionThrown')errors.push(m.params.exceptionDetails.exception?.description||m.params.exceptionDetails.text)});await cdp('Page.enable');await cdp('Runtime.enable');await cdp('Network.enable');await cdp('Network.setCookie',{name:cookie.split('=')[0],value:cookie.split('=').slice(1).join('='),url:origin,secure:false,httpOnly:true});await cdp('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});await cdp('Page.navigate',{url:origin+'/#/projects'});await until(()=>js(`!!document.querySelector('[data-action="new-project"]')`),'projects');await click('[data-action="new-project"]');await until(()=>js(`!!document.querySelector('.studio')`),'new canvas');pid=await js(`location.hash.split('/')[2]`);await settled();assert.equal(await count(),0);assert.equal(await js(`document.querySelectorAll('.studio [required]').length`),0);outcomes.push('One click creates blank canvas with zero required fields');await screenshot('studio-empty-desktop');
+chrome=spawn(process.env.CHROME_BIN||'/usr/bin/chromium',['--headless','--no-sandbox','--disable-dev-shm-usage','--use-angle=swiftshader','--enable-unsafe-swiftshader','--no-first-run','--disable-popup-blocking','--remote-debugging-port=0','--user-data-dir='+dir+'/chrome','--window-size=1440,1000','about:blank'],{stdio:'ignore'});let target;await until(async()=>{try{const port=(await readFile(join(dir,'chrome','DevToolsActivePort'),'utf8')).split(/\r?\n/)[0];target=(await (await realFetch('http://127.0.0.1:'+port+'/json')).json()).find(t=>t.type==='page');return !!target}catch{return false}},'browser start');ws=new WebSocket(target.webSocketDebuggerUrl);await new Promise(r=>ws.addEventListener('open',r,{once:true}));ws.addEventListener('message',e=>{const m=JSON.parse(e.data);if(m.id&&inflight.has(m.id)){const q=inflight.get(m.id);inflight.delete(m.id);m.error?q.reject(Error(JSON.stringify(m.error))):q.resolve(m.result)}else if(m.method==='Runtime.exceptionThrown')errors.push(m.params.exceptionDetails.exception?.description||m.params.exceptionDetails.text)});await cdp('Page.enable');await cdp('Runtime.enable');await cdp('Network.enable');await cdp('Network.setCookie',{name:cookie.split('=')[0],value:cookie.split('=').slice(1).join('='),url:origin,secure:false,httpOnly:true});await cdp('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});await cdp('Page.navigate',{url:origin+'/#/projects'});await until(()=>js(`!!document.querySelector('[data-action="new-project"]')`),'projects');await click('[data-action="new-project"]');await until(()=>js(`!!document.querySelector('.studio')`),'new canvas');pid=await js(`location.hash.split('/')[2]`);await settled();assert.equal(await count(),0);assert.equal(await js(`document.querySelectorAll('.studio [required]').length`),0);outcomes.push('One click creates blank canvas with zero required fields');await screenshot('studio-empty-desktop');
 await click('[data-action="studio-add"]');await until(async()=>await count()===1,'manual add');await settled();assert.equal(modelCalls,0);const initial=await space();await screenshot('studio-selected-desktop');
 await js(`(()=>{const el=document.querySelector('#studio-space-name');el.value='安静阅读';el.dispatchEvent(new Event('change',{bubbles:true}))})()`);await until(async()=> (await space()).label==='安静阅读','inline name');await js(`(()=>{const el=document.querySelector('#studio-space-area');el.value='25';el.dispatchEvent(new Event('change',{bubbles:true}))})()`);await until(async()=> (await space()).depth===5,'inline area');outcomes.push('Inline name and area update geometry');
 // Real mouse drag using the rendered SVG transform.
@@ -237,6 +237,38 @@ assert.deepEqual((await sketchPlan()).strokes,[originalArrow]);
 assert.equal((await sketchPlan()).spaces[0].height,3.6);
 outcomes.push('Select, move and delete individual strokes; build the earlier L outline while retaining its later arrow, pull to 3.6 m, undo and reopen');
 
+
+await click('[data-action="studio-view"][data-view="axon"]');
+const beforeOrbit=JSON.stringify(await sketchPlan());
+const orbitAt=await js("(()=>{const r=document.querySelector('#studio-canvas svg').getBoundingClientRect();return {x:r.x+r.width*.5,y:r.y+r.height*.5}})()");
+const yaw=await js("document.querySelector('#studio-canvas svg').dataset.yaw");
+await cdp('Input.dispatchMouseEvent',{type:'mousePressed',...orbitAt,button:'left',clickCount:1,modifiers:8});
+await cdp('Input.dispatchMouseEvent',{type:'mouseMoved',x:orbitAt.x+70,y:orbitAt.y+25,button:'left',buttons:1,modifiers:8});
+await cdp('Input.dispatchMouseEvent',{type:'mouseReleased',x:orbitAt.x+70,y:orbitAt.y+25,button:'left',clickCount:1});
+assert.notEqual(await js("document.querySelector('#studio-canvas svg').dataset.yaw"),yaw);
+await cdp('Input.dispatchMouseEvent',{type:'mouseWheel',...orbitAt,deltaX:0,deltaY:-120});
+assert.ok(await js("Number(document.querySelector('#studio-canvas svg').dataset.zoom)>1"));
+const rotatedYaw=await js("document.querySelector('#studio-canvas svg').dataset.yaw");
+await click('[data-action="studio-view"][data-view="plan"]');await click('[data-action="studio-view"][data-view="axon"]');
+assert.equal(await js("document.querySelector('#studio-canvas svg').dataset.yaw"),rotatedYaw);
+assert.equal(JSON.stringify(await sketchPlan()),beforeOrbit);
+
+const oldBox=await js("document.querySelector('#studio-canvas svg').getAttribute('viewBox')");
+await cdp('Input.dispatchMouseEvent',{type:'mousePressed',...orbitAt,button:'right',clickCount:1});
+await cdp('Input.dispatchMouseEvent',{type:'mouseMoved',x:orbitAt.x+30,y:orbitAt.y+10,button:'right',buttons:2});
+await cdp('Input.dispatchMouseEvent',{type:'mouseReleased',x:orbitAt.x+30,y:orbitAt.y+10,button:'right',clickCount:1});
+assert.notEqual(await js("document.querySelector('#studio-canvas svg').getAttribute('viewBox')"),oldBox);
+const pullAt=await js("(()=>{const svg=document.querySelector('#studio-canvas svg'),roof=svg.querySelector('[data-roof]'),p=roof.points;const a=p.getItem(0),b=p.getItem(1),c=p.getItem(p.numberOfItems-1);const q=new DOMPoint(a.x*.8+b.x*.1+c.x*.1,a.y*.8+b.y*.1+c.y*.1).matrixTransform(svg.getScreenCTM());return {x:q.x,y:q.y,dy:12*Math.cos(Number(svg.dataset.pitch))/Math.cos(Math.PI/6)*svg.getScreenCTM().d}})()");
+await drag({x:pullAt.x,y:pullAt.y},{x:pullAt.x,y:pullAt.y-pullAt.dy});
+await until(async()=> (await sketchPlan()).spaces[0].height===4.6,'extrusion after orbit');
+await until(()=>js("document.querySelector('[data-action=studio-undo]')?.disabled===false"),'rotated undo ready');
+await click('[data-action=studio-undo]');
+await until(async()=> (await sketchPlan()).spaces[0].height===3.6,'undo rotated extrusion');
+
+await screenshot('mass-orbit');
+await click('[data-action="studio-mass-reset"]');
+outcomes.push('Mass view rotates with Shift drag, zooms, retains its camera across views and preserves geometry');
+
 await cdp('Page.navigate',{url:origin+'/#/home'});
 await until(()=>js("!!document.querySelector('.work-portals')"),'two workspaces');
 await screenshot('work-home');
@@ -288,6 +320,40 @@ await cdp('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScale
 assert.ok(await js('document.documentElement.scrollWidth<=innerWidth+1'));
 await screenshot('final-review-mobile');
 outcomes.push('Independent PDF submission, separate AI review, invited teacher page pin and verdict, student supplement, and mobile desk');
+
+
+if(process.env.STUDIO_SKP_FIXTURE){
+  await cdp('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
+  await cdp('Page.navigate',{url:origin+'/#/final-new'});
+  await until(()=>js("!!document.querySelector('#final-submit-form')"),'SKP submit form');
+  const skpDoc=await cdp('DOM.getDocument'),skpInput=await cdp('DOM.querySelector',{nodeId:skpDoc.root.nodeId,selector:'#final-submit-form [type=file]'});
+  await cdp('DOM.setFileInputFiles',{nodeId:skpInput.nodeId,files:[resolve(process.env.STUDIO_SKP_FIXTURE)]});
+  await js("document.querySelector('#final-submit-form [name=title]').value='SketchUp 模型终评';document.querySelector('#final-submit-form').requestSubmit()");
+  await until(()=>js("!!document.querySelector('#room-model canvas')"),'real SKP conversion and WebGL');
+  const modelRoomId=await js("location.hash.split('/').at(-1)");
+  const modelRoom=(await api('/api/review-rooms/'+modelRoomId)).room;
+  const mf=modelRoom.version.snapshot.files[0];
+  assert.equal(mf.type,'skp');assert.equal(mf.conversion.status,'ready');assert.ok(mf.conversion.resultId);
+  await screenshot('final-skp');
+  const original=(await realFetch(origin+'/api/review-rooms/'+modelRoomId+'/files/'+mf.id,{headers:{cookie}}));
+  assert.equal(original.status,200);assert.equal((await original.arrayBuffer()).byteLength,(await readFile(process.env.STUDIO_SKP_FIXTURE)).length);
+  await click('[data-action=room-final-invite]');
+  await js("document.querySelector('#room-invite-form [name=email]').value='faculty@example.test';document.querySelector('#room-invite-form').requestSubmit()");
+  await until(()=>js("!!document.querySelector('#room-invite-url')"),'SKP teacher invite');
+  const modelInvite=await js("document.querySelector('#room-invite-url').value");
+  await switchCookie(reg.headers.get('set-cookie').split(';')[0]);await cdp('Page.navigate',{url:modelInvite});
+  await until(()=>js("!!document.querySelector('#room-model canvas')"),'teacher shared SKP');
+  await click('[data-action=room-pin]');
+  const spot=await js("(()=>{const r=document.querySelector('#room-model canvas').getBoundingClientRect();return {x:r.x+r.width*.5,y:r.y+r.height*.5}})()");
+  await cdp('Input.dispatchMouseEvent',{type:'mousePressed',...spot,button:'left',clickCount:1});
+  await cdp('Input.dispatchMouseEvent',{type:'mouseReleased',...spot,button:'left',clickCount:1});
+  await until(()=>js("!!document.querySelector('#room-comment-form')"),'model surface pin');
+  await js("document.querySelector('#room-comment-form textarea').value='模型空间请补充说明';document.querySelector('#room-comment-form').requestSubmit()");
+  await until(()=>js("document.querySelector('.desk-feedback').textContent.includes('模型空间请补充说明')"),'saved model comment');
+  await switchCookie(cookie);await cdp('Page.reload');await until(()=>js("!!document.querySelector('#room-model canvas')"),'owner model pin reload');
+  assert.ok((await api('/api/review-rooms/'+modelRoomId)).room.comments[0].point.camera.position.length===3);
+  outcomes.push('Real SKP uploads without concept project, converts in browser, restores shared model and supports teacher surface annotations');
+}
 
 assert.deepEqual(errors,[]);await writeFile(qaOut+'/studio-browser-results.json',JSON.stringify({passed:true,outcomes,modelCalls,errors},null,2));console.log(JSON.stringify({passed:true,outcomes,modelCalls,errors},null,2));
 }catch(error){console.error(error.stack);if(ws?.readyState===1){console.error('UI',await js(`document.body.innerText.slice(-4000)`));await screenshot('studio-failure').catch(()=>{})}await writeFile(qaOut+'/studio-browser-results.json',JSON.stringify({passed:false,outcomes,modelCalls,errors,error:error.message},null,2));process.exitCode=1}finally{globalThis.fetch=realFetch;if(ws?.readyState===1)ws.send(JSON.stringify({id:++counter,method:'Browser.close'}));ws?.close();chrome?.kill('SIGTERM');if(app)await app.close();await wait(200);await rm(dir,{recursive:true,force:true}).catch(()=>{})}

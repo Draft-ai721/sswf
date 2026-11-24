@@ -52,7 +52,7 @@ if(data.finalRoomId){
  const rec=await read(bucket,'review-rooms/'+data.finalRoomId+'.json'),room=rec?.value;
  if(room?.kind!=='final'||room.ownerPrefix!==prefix)throw new AiError('作品不存在或无权请求点评。',403,'foreign_final');
  state={etag:rec.etag,value:{course:room.course}};p={...room.version.snapshot,id:data.projectId};
- data.fileIds=p.files.map(f=>f.id);data.views=[];
+ data.fileIds=p.files.map(f=>f.id);if(!c.vision)data.views=[];
 }else{state=await read(bucket,stateKey);p=state?.value.projects.find(p=>p.id===data.projectId)}
 if(!p)throw new AiError('项目不存在或无权访问。',404,'project_missing');if(request.headers.get('If-Match')!==state.etag)throw new AiError('请先保存最新汇报，再生成AI内容。',409,'state_conflict');if(data.kind==='assistant'){const option=p.workflow?.options.find(o=>o.id===data.assistantSelection.optionId);if(!option||data.assistantSelection.spaceIds.some(id=>!option.plan?.spaces.some(s=>s.id===id)))throw new AiError('当前选择不属于此项目或已变化。',400,'assistant_selection_invalid')}if(data.kind==='layout'&&(!p.workflow?.program?.length||p.workflow.program.some(r=>r.area<=0)||p.workflow.program.reduce((n,r)=>n+r.count,0)>24))throw new AiError('布局生成需要已保存的正数功能面积，需求总数量最多24个；较大的项目可先手动推演。',400,'layout_program_required');if(!data.finalRoomId&&data.kind==='review'&&!p.report.trim())throw new AiError('请先写个人汇报稿，再发起点评。',400,'report_missing');
 let prepared,thread={};if(data.kind==='followup'){

@@ -1,3 +1,4 @@
+import {createConversions,MODEL_STATUS} from './conversion-client.js';
 import {pdfSheet} from './final-pdf.js';
 import {esc} from './materials.js';
 import {extractTaskText,reviewCover} from './studio-pdf.js';
@@ -11,14 +12,14 @@ export function submissionPage(projects, guest) {
   }
   return `<section class="work-page submit-page"><a class="back-link" href="#/finals">← 最终评审</a><h1>提交作品</h1>
     <form id="final-submit-form" class="submission-form">
-    <fieldset><legend>作品材料</legend><label class="file-pick">选择展板或图纸<input type="file" name="files" accept=".pdf,.jpg,.jpeg,.png" multiple><small>PDF、JPG、PNG · 最多 3 份，每份 20 MB</small></label>
+    <fieldset><legend>作品材料</legend><label class="file-pick">选择展板或图纸<input type="file" name="files" accept=".skp,.pdf,.jpg,.jpeg,.png" multiple><small>SKP、PDF、JPG、PNG · 最多 3 份，每份 20 MB</small></label>
     ${options.length?`<details><summary>从概念生成导入</summary><label>只导入所选方案的平面和体块<select name="source"><option value="">使用上传的材料</option>${options.join('')}</select></label></details>`:''}</fieldset>
     <fieldset><legend>作品信息</legend><label>作品名称<input name="title" required maxlength="100"></label><label>设计说明或希望评阅的问题（选填）<textarea name="focus" rows="5" maxlength="3000"></textarea></label>
     <small>提交后可以单独请求 AI 点评，或邀请老师审查。</small><button class="btn primary" type="submit">提交并查看作品</button><output aria-live="polite"></output></fieldset></form></section>`;
 }
 export async function uploadFinalFiles(files,api,status,cache=new Map()) {
   if(!files.length||files.length>3)throw Error('请选择一至三份作品材料。');
-  for(const file of files)if(!/\.(pdf|jpe?g|png)$/i.test(file.name)||file.size>20*1024*1024||!file.size)throw Error('请选择有效的 PDF、JPG 或 PNG，每份最多 20 MB。');
+  for(const file of files)if(!/\.(skp|pdf|jpe?g|png)$/i.test(file.name)||file.size>20*1024*1024||!file.size)throw Error('请选择有效的 SKP、PDF、JPG 或 PNG，每份最多 20 MB。');
   const result=[];
   for(const file of files){
     if(!cache.has(file)){
@@ -32,6 +33,10 @@ export async function uploadFinalFiles(files,api,status,cache=new Map()) {
           const cover=await reviewCover(file);
           if(cover){const sample=await api('/api/final-files?name=cover.jpg&parentId='+stored.id+'&page=1',{method:'POST',body:cover});previewId=sample.file.id}
         }catch{/* Reviewers can still read the full original. */}
+      }
+      if(stored.type==='skp'){
+        const conversions=createConversions({api,update(id,state){status(file.name+' · '+(MODEL_STATUS[state.status]||state.status)+(state.error?' · '+state.error:''))},onReady(){}});
+        await conversions.start(stored);
       }
       cache.set(file,{id:stored.id,extractedText,previewId});
     }
@@ -62,6 +67,7 @@ export function finalDesk(room,{selected,tab,material,aiBusy,pdfPage}) {
   const work=room.version.snapshot, owner=room.role==='owner', reviewer=room.role==='reviewer';
   const file=work.files.find(f=>f.id===selected)||work.files[0];
   const drawing=work.drawing;
+  const retry=file?.type==='skp'&&file.conversion?.status!=='ready'&&owner?`<button class="btn secondary" data-action="room-final-convert" data-id="${esc(file.id)}">转换 / 重试模型</button><output id="final-conversion-status" aria-live="polite"></output>`:'';
   const evidence=drawing ? (selected==='axon'?axonSvg(drawing.plan,drawing.program):planSvg(drawing.plan,drawing.program)) : file?.type==='pdf'?pdfSheet(room,file,pdfPage):file?material(room,file):'';
   const tabs=drawing?[['plan','平面'],['axon','体块']]:work.files.map(f=>[f.id,f.name]);
   const active=drawing?(selected==='axon'?'axon':'plan'):file?.id;
@@ -74,7 +80,7 @@ export function finalDesk(room,{selected,tab,material,aiBusy,pdfPage}) {
   const ai=result?`<small>${esc(result.provider)} · ${esc(result.model)}</small>${result.comments.map(c=>`<article class="evaluation"><h3>${esc(c.title)}</h3><p>${esc(c.evidence)}</p><p>${esc(c.suggestion)}</p>${c.fileId?`<button class="btn text" data-action="room-material" data-id="${esc(c.fileId)}">${esc(c.location)} ↗</button>`:`<small>${esc(c.location)}</small>`}</article>`).join('')}`:`<p class="work-empty">尚无 AI 点评。支持图像的模型可参考展板图像或 PDF 首页；PDF 文字最多提取前十页。</p>${owner?`<button class="btn secondary" data-action="room-final-ai" ${aiBusy?'disabled':''}>${aiBusy?'正在生成…':'生成 AI 点评'}</button>`:''}`;
   return `<section class="final-desk"><a class="back-link" href="#/finals">← 最终评审</a><div class="work-heading"><h1>${esc(room.title)}</h1>${owner?'<button class="btn secondary" data-action="room-final-invite">邀请老师</button>':''}</div>
     ${work.description?`<p class="final-focus">${esc(work.description)}</p>`:''}
-    <div class="desk-columns"><section class="desk-sheet"><nav class="sheet-tabs" aria-label="作品材料">${tabs.map(([id,name])=>`<button aria-pressed="${id===active}" data-action="room-material" data-id="${esc(id)}">${esc(name)}</button>`).join('')}</nav>${evidence}</section>
+    <div class="desk-columns"><section class="desk-sheet"><nav class="sheet-tabs" aria-label="作品材料">${tabs.map(([id,name])=>`<button aria-pressed="${id===active}" data-action="room-material" data-id="${esc(id)}">${esc(name)}</button>`).join('')}</nav>${evidence}${retry}</section>
     <aside class="desk-feedback"><nav class="work-tabs" aria-label="点评来源">${[['teacher','教师审查'],['ai','AI 点评']].map(([id,name])=>`<button aria-pressed="${tab===id}" data-action="room-final-tab" data-id="${id}">${name}</button>`).join('')}</nav>
     ${tab==='ai'?ai:`${reviewer?'<button class="btn primary" data-action="room-final-verdict">发布总评</button> <button class="btn text" data-action="room-comment" data-id="project">添加意见</button>':''}${verdicts||'<p class="work-empty">老师发布总评后会显示在这里。</p>'}${comments}`}
     <button class="btn text" data-action="room-refresh">刷新评阅记录</button></aside></div></section>`;
