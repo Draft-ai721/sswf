@@ -1,4 +1,5 @@
 import {planMetrics,planOf} from './space-planning.js';
+import {requirementAreas} from './program-requirements.js';
 export const DESIGN_STAGES=[
  {id:1,name:'任务与目标',en:'BRIEF',purpose:'理解不同主体的需求，提出值得设计的问题。',fields:[['buildingType','建筑类型'],['site','基地与场所'],['scale','规模与课程要求'],['stakeholders','使用者、管理者与其他主体'],['questions','核心设计问题'],['goals','设计目标与判断依据'],['unknowns','待确认事项']]},
  {id:2,name:'场地与使用者调研',en:'RESEARCH',purpose:'用观察、访谈和材料建立设计依据。'},
@@ -12,7 +13,14 @@ export const SCORE_FIELDS=[['function','功能组织'],['flow','交通流线'],[
 export const DESIGN_PERSPECTIVES=['综合讨论','教师视角（AI 模拟）','同伴视角（AI 模拟）','使用者视角（AI 模拟）'];
 export function emptyWorkflow(p={}){return {schema:1,active:1,stages:DESIGN_STAGES.map(s=>({id:s.id,status:'idle',notes:'',fileIds:[]})),brief:{buildingType:'',site:'',scale:'',stakeholders:p.users||'',questions:p.description||'',goals:p.goal||'',unknowns:''},findings:[],pins:[],mapFileId:'',program:[],site:{area:0,targetArea:0},constraints:[],options:[],selectedOptionId:'',choiceReason:'',design:{intent:'',layout:'',space:'',technical:'',unresolved:''},review:{reflection:'',nextQuestions:''},discussions:[],aiCandidates:[],board:[],relationships:[]}}
 export function workflowOf(p){return p?.workflow||emptyWorkflow(p)}
-export function areaSummary(w){const total=w.program.reduce((n,r)=>n+r.count*r.area,0);return {total:Math.round(total*100)/100,target:w.site.targetArea,difference:w.site.targetArea?Math.round((total-w.site.targetArea)*100)/100:null,siteArea:w.site.area}}
+export function areaSummary(w){
+ const rows=w.program.map(requirementAreas);
+ const total=rows.reduce((sum,row)=>sum+(row.totalM2??0),0);
+ const pending=rows.filter(row=>row.totalM2===null||!row.confirmed).length;
+ return {total:Math.round(total*100)/100,target:w.site.targetArea,
+   difference:w.site.targetArea&&!pending?Math.round((total-w.site.targetArea)*100)/100:null,
+   siteArea:w.site.area,...(pending?{pending}:{})};
+}
 const stageBlock=(w,n)=>n===1?w.brief:n===2?{findings:w.findings,pins:w.pins,mapFileId:w.mapFileId}:n===3?{program:w.program,site:w.site,summary:areaSummary(w),constraints:w.constraints,relationships:w.relationships||[]}:n===4?{options:w.options.map(o=>({...o,metrics:planMetrics(planOf(o),w.program,w.relationships||[])})),selectedOptionId:w.selectedOptionId,choiceReason:w.choiceReason}:n===5?w.design:{...w.review,discussions:w.discussions};
 export function workflowStageText(p,n){const w=workflowOf(p);return JSON.stringify({stage:DESIGN_STAGES[n-1].name,notes:w.stages[n-1].notes,materials:w.stages[n-1].fileIds,board:(w.board||[]).filter(c=>c.stage===n),content:stageBlock(w,n)},null,2)}
 export function workflowText(p){if(!p.workflow)return '';return DESIGN_STAGES.map(s=>s.id+' / '+s.name+' · '+STAGE_STATUS[p.workflow.stages[s.id-1].status]+'\n'+workflowStageText(p,s.id)).join('\n\n')+'\n\nAI候选与来源\n'+JSON.stringify(p.workflow.aiCandidates,null,2)}

@@ -47,6 +47,8 @@ PUBLIC_URL=http://localhost:3000 npm start
 
 ## 维护
 
+课堂试点、分步开放写入、备份与隔离恢复的操作见[课堂试点与恢复手册](handoff/pilot-release.md)。
+
 - 建议在 Railway 为 `/data` 配置卷备份；恢复时需要同时保留 SQLite 和加密主密钥。
 - 备份 SQLite 应使用 SQLite backup API 或先暂停写入，不能只复制正在写入的主数据库文件而漏掉 WAL。
 - 卷满、丢失挂载或加密主密钥变化都可能影响保存；先查 Railway 运行日志和卷状态。

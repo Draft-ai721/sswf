@@ -11,12 +11,49 @@ export function deferCanvasRender(){
   return true;
 }
 
-function releaseGesture(svg,render){
+export function releaseGesture(svg,render){
   delete svg.dataset.gestureRoute;
   if(svg.dataset.pendingRender){
     delete svg.dataset.pendingRender;
     queueMicrotask(render);
   }
+}
+
+export function mountPlanTouchNavigation(svg,{interrupt,navigate,render}){
+  const fingers=new Map();
+  let navigating=false, pen=null;
+  const sample=event=>[event.clientX,event.clientY];
+  function frame(){
+    const [a,b]=fingers.values();
+    return {x:(a[0]+b[0])/2,y:(a[1]+b[1])/2,distance:Math.hypot(a[0]-b[0],a[1]-b[1])};
+  }
+  function consume(event){event.preventDefault();event.stopImmediatePropagation()}
+  svg.addEventListener('pointerdown',event=>{
+    if(event.pointerType==='pen'){pen=event.pointerId;return}
+    if(event.pointerType!=='touch')return;
+    if(pen!==null){consume(event);return}
+    fingers.set(event.pointerId,sample(event));
+    if(fingers.size<2&&!navigating)return;
+    consume(event);
+    if(!navigating){navigating=true;interrupt()}
+    svg.dataset.gestureRoute=location.hash;
+    for(const id of fingers.keys())svg.setPointerCapture(id);
+  },true);
+  svg.addEventListener('pointermove',event=>{
+    if(!fingers.has(event.pointerId))return;
+    if(!navigating){fingers.set(event.pointerId,sample(event));return}
+    consume(event);
+    const before=fingers.size>=2?frame():null;
+    fingers.set(event.pointerId,sample(event));
+    if(before?.distance>0)navigate(before,frame());
+  },true);
+  function finish(event){
+    if(pen===event.pointerId)pen=null;
+    if(!fingers.delete(event.pointerId)||!navigating)return;
+    consume(event);
+    if(fingers.size===0){navigating=false;releaseGesture(svg,render);render()}
+  }
+  for(const type of ['pointerup','pointercancel','lostpointercapture'])svg.addEventListener(type,finish,true);
 }
 
 export function mountStrokeSelection(svg,plan,{select,commit,render}){
@@ -59,14 +96,17 @@ export function mountStrokeSelection(svg,plan,{select,commit,render}){
     else render();
   });
   function cancel(e){
-    if(drag?.pointerId!==e.pointerId)return;
-    consume(e);
+    if(!drag||(e&&drag.pointerId!==e.pointerId))return;
+    if(e)consume(e);
+    drag.group.removeAttribute('transform');
     drag=null;
+    if(!e)return;
     releaseGesture(svg,render);
     render();
   }
   svg.addEventListener('pointercancel',cancel);
   svg.addEventListener('lostpointercapture',cancel);
+  return cancel;
 }
 
 export function mountPen(svg,plan,commit,render){
@@ -79,10 +119,10 @@ export function mountPen(svg,plan,commit,render){
     if(stroke.points.length>=MAX_STROKE_POINTS)stroke.points=stroke.points.filter((_,i)=>i%2===0);
     stroke.points.push(point);
   }
-  function cancel(){
+  function cancel(interrupted=false){
     stroke?.line.remove();
     stroke=null;
-    releaseGesture(svg,render);
+    if(!interrupted)releaseGesture(svg,render);
   }
   svg.addEventListener('pointerdown',e=>{
     if(stroke||e.button!==0||!e.isPrimary)return;

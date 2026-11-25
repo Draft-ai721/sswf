@@ -1,13 +1,13 @@
 import {esc} from './materials.js';
 
-export function pdfSheet(room,file,page) {
+export function pdfSheet(room,file,page,base='/api/review-rooms/'+room.id) {
   return `<div class="pdf-sheet" data-pdf-sheet data-file="${esc(file.id)}" data-page="${page}">
     <div class="pdf-tools"><button type="button" data-page-step="-1" disabled>上一页</button><output aria-live="polite">读取中…</output><button type="button" data-page-step="1" disabled>下一页</button>
     <label>缩放 <select aria-label="图纸缩放"><option value="1">适宽</option><option value="1.5">150%</option><option value="2">200%</option></select></label></div>
     <div class="pdf-scroller"><div class="pdf-surface"><canvas aria-label="${esc(file.name)}"></canvas><div class="pdf-pins"></div></div></div>
-    <a class="btn text" href="/api/review-rooms/${room.id}/files/${file.id}" download>下载原件</a></div>`;
+    <a class="btn text" href="${base}/files/${file.id}" download>下载原件</a></div>`;
 }
-export function mountPdfSheet(el,room,onPoint,onPage) {
+export function mountPdfSheet(el,room,onPoint,onPage,base='/api/review-rooms/'+room.id) {
   let disposed=false,loading,pdf,job,sequence=0;
   const surface=el.querySelector('.pdf-surface'),canvas=el.querySelector('canvas'),out=el.querySelector('output');
   const pins=el.querySelector('.pdf-pins'),zoom=el.querySelector('select');
@@ -38,7 +38,7 @@ export function mountPdfSheet(el,room,onPoint,onPage) {
   if(room.role==='reviewer')canvas.onclick=e=>{if(!pdf)return;const b=canvas.getBoundingClientRect();onPoint(el.dataset.file,null,{x:(e.clientX-b.left)/b.width,y:(e.clientY-b.top)/b.height,page})};
   (async()=>{
     try{const lib=await import('./vendor/pdf.mjs');if(disposed)return;lib.GlobalWorkerOptions.workerSrc='/vendor/pdf.worker.mjs';
-      loading=lib.getDocument({url:'/api/review-rooms/'+room.id+'/files/'+el.dataset.file,cMapUrl:'/pdf-cmaps/',cMapPacked:true,standardFontDataUrl:'/pdf-fonts/',isEvalSupported:false});
+      loading=lib.getDocument({url:base+'/files/'+el.dataset.file,cMapUrl:'/pdf-cmaps/',cMapPacked:true,standardFontDataUrl:'/pdf-fonts/',isEvalSupported:false});
       pdf=await loading.promise;if(!disposed)await draw();
     }catch{if(!disposed)out.textContent='图纸未能预览，可下载原件。'}
   })();

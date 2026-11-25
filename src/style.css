@@ -16,3 +16,14 @@
 .review-events{margin:12px 0;color:#687b5c;font-size:12px}.review-events summary{cursor:pointer}.review-events p{font-size:11px;line-height:1.8}.page-heading>.row{flex-wrap:wrap}.ai-inputs pre{white-space:pre-wrap;overflow-wrap:anywhere}.room-material-tabs{max-height:180px;overflow:auto}.room-comment .btn{white-space:normal}.sidebar{overflow-y:auto}.model-compare-grid select{font-size:12px}.workspace-tools{gap:14px}
 
 @media(max-width:760px){.top-actions.guest-actions{gap:10px}.top-actions.guest-actions .view-role{display:none}.top-actions.guest-actions .btn{font-size:12px;padding:7px 9px}}
+
+.room-version-toolbar{gap:12px;margin-bottom:16px;padding:12px;border:1px solid #dce4d4;border-radius:8px}
+.room-version-toolbar select,.room-concept-toolbar select{min-width:0;max-width:100%;padding:6px}
+.final-version-strip{flex-wrap:wrap;gap:10px;padding:12px 0 18px}.final-version-strip select{padding:7px;max-width:100%}
+.final-keep{display:flex!important;align-items:center;gap:8px}.final-keep input{width:auto}.final-history{padding-left:24px}.final-history small{display:block;padding-left:8px}
+.final-model-comparison{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.final-model-comparison .room-model{height:320px;min-height:320px}
+@media(max-width:720px){.final-model-comparison{grid-template-columns:1fr}}
+.room-concept-toolbar{gap:8px;flex-wrap:wrap}
+.room-concept-canvas svg{width:100%;height:clamp(220px,50vh,540px);display:block}
+.room-concept-canvas{margin:12px 0;background:#f7faf4;border-radius:8px;border:1px solid #dce4d4}
+.room-concept-toolbar button[aria-pressed=true]{border-color:#42705a;background:#dfebde}

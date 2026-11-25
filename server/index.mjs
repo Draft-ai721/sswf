@@ -7,7 +7,8 @@ import {pathToFileURL} from 'node:url';
 import {randomBytes} from 'node:crypto';
 import {openDatabase,SqliteBucket} from './storage.mjs';
 import {Auth,safeReturn} from './auth.mjs';
-import {api} from '../worker/api.js';
+import {api,pauseWorkspaceWrites,workspaceReadOnly} from '../worker/api.js';
+import {pilotRecorder,releaseRevision} from './pilot-events.mjs';
 const MIME={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.mjs':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.txt':'text/plain; charset=utf-8','.bcmap':'application/octet-stream','.pfb':'application/octet-stream','.ttf':'font/ttf'};
 const CSP="default-src 'self'; script-src 'self'; worker-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' blob:; frame-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'";
 const json=(body,status=200)=>new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}});
@@ -23,15 +24,27 @@ export async function createStudioServer(options={}){
  const origin=options.origin||config.PUBLIC_URL||(config.RAILWAY_PUBLIC_DOMAIN?'https://'+config.RAILWAY_PUBLIC_DOMAIN:'http://localhost:'+(config.PORT||3000));
  const canonical=new URL(origin);if(canonical.pathname!=='/'||canonical.search||canonical.hash||canonical.username||canonical.password)throw Error('PUBLIC_URL must be an origin without a path.');
  const auth=new Auth(db,{bootstrapToken,origin:canonical.origin}),bucket=new SqliteBucket(db),env={...config,AI_PROVIDER:config.AI_PROVIDER||'deepseek',AI_SECRET_ENCRYPTION_KEY:aiSecret,BUCKET:bucket};
+ const revision=releaseRevision(config),recordPilot=pilotRecorder({enabled:config.STUDIO_PILOT_TELEMETRY==='1',key:aiSecret,
+   revision,cookieName:auth.cookieName,sink:options.pilotLog});
  async function handle(request){
   const u=new URL(request.url);
-  if(u.pathname==='/healthz'){db.prepare('SELECT 1').get();return json({ok:true,storage:'sqlite'})}
+  if(u.pathname==='/healthz'){db.prepare('SELECT 1').get();return json({ok:true,storage:'sqlite',...(revision?{revision}:{}),
+    ...(workspaceReadOnly(env)?{workWrites:false}:{})})}
   if(['POST','PUT','PATCH','DELETE'].includes(request.method)&&request.headers.get('origin')!==auth.origin)return json({error:'不允许跨站修改。'},403);
   const authResponse=await auth.handle(request);if(authResponse)return authResponse;
   if(u.pathname==='/signin-with-chatgpt')return new Response(null,{status:302,headers:{Location:'/login?return_to='+encodeURIComponent(safeReturn(u.searchParams.get('return_to'))),'Cache-Control':'no-store'}});
   const headers=new Headers(request.headers);for(const name of [...headers.keys()])if(name.toLowerCase().startsWith('oai-'))headers.delete(name);
-  const user=auth.user(request);const siteAdminResponse=await siteAiAdminApi(request,env,user,r=>auth.body(r));if(siteAdminResponse)return siteAdminResponse;if(user){headers.set('oai-authenticated-user-id',user.id);headers.set('oai-authenticated-user-name',encodeURIComponent(user.name));if(user.identityConfirmed)headers.set('oai-authenticated-user-email',user.email)}
-  if(u.pathname.startsWith('/api/'))return api(new Request(request,{headers}),{...env,SITE_AI_ADMIN:user?.role==='admin'});
+  const user=auth.user(request);
+  if(user?.role==='admin'&&u.pathname==='/api/admin/ai'){
+    const paused=pauseWorkspaceWrites(request,env);if(paused)return paused;
+  }
+  const siteAdminResponse=await siteAiAdminApi(request,env,user,r=>auth.body(r));if(siteAdminResponse)return siteAdminResponse;
+  if(user){headers.set('oai-authenticated-user-id',user.id);headers.set('oai-authenticated-user-name',encodeURIComponent(user.name));if(user.identityConfirmed)headers.set('oai-authenticated-user-email',user.email)}
+  if(u.pathname.startsWith('/api/')){
+    const response=await api(new Request(request,{headers}),{...env,SITE_AI_ADMIN:user?.role==='admin'});
+    if(user)await recordPilot(request,response).catch(()=>{});
+    return response;
+  }
   if(!['GET','HEAD'].includes(request.method))return new Response('Method not allowed',{status:405,headers:{Allow:'GET, HEAD'}});
   let pathname;try{pathname=decodeURIComponent(u.pathname)}catch{return new Response('Invalid path',{status:400})}
   if(['login','register','setup','activate','account'].some(p=>pathname==='/'+p))pathname='/account.html';

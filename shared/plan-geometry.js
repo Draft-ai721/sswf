@@ -1,5 +1,78 @@
 export const round = value => Math.round(value * 100) / 100;
 export const MAX_VERTICES = 64;
+export const PLAN_VIEW_HEADER = 'X-Plan-Views';
+
+export function validateViewpoints(value) {
+  if(value===undefined)return [];
+  if(!Array.isArray(value)||value.length>12)throw Error('每个方案最多保存 12 个视角。');
+  const ids=new Set();
+  return value.map(item=>{
+    if(typeof item?.id!=='string'||!/^[a-zA-Z0-9-]{1,80}$/.test(item.id)||ids.has(item.id)||
+        typeof item.name!=='string'||!item.name.trim()||item.name.length>60||!['plan','axon'].includes(item.kind)){
+      throw Error('视角名称或编号无效。');
+    }
+    const limits=item.kind==='plan'?{zoom:[.2,6],panX:[-1e6,1e6],panY:[-1e6,1e6]}:
+      {zoom:[.2,8],panX:[-1e6,1e6],panY:[-1e6,1e6],yaw:[-Math.PI,Math.PI],pitch:[.12,1.4]};
+    const camera=Object.fromEntries(Object.entries(limits).map(([key,[min,max]])=>{
+      const number=item.camera?.[key];
+      if(!Number.isFinite(number)||number<min||number>max)throw Error('视角参数无效。');
+      return [key,number];
+    }));
+    ids.add(item.id);
+    return {id:item.id,name:item.name.trim(),kind:item.kind,camera};
+  });
+}
+
+export function endpointAtLength(start, direction, meters) {
+  const length = Math.hypot(...direction);
+  if (!Number.isFinite(length) || length === 0 || !Number.isFinite(meters) || meters < .01 || meters > 1500) {
+    throw Error('请输入有效的边长和方向。');
+  }
+  return start.map((value, i) => round(value + direction[i] / length * meters));
+}
+
+export function spaceWithEdgeLength(space, edgeIndex, meters) {
+  const vertices = footprintOf(space);
+  if (!Number.isInteger(edgeIndex) || edgeIndex < 0 || edgeIndex >= vertices.length) {
+    throw Error('请选择要调整的边。');
+  }
+  const endIndex = (edgeIndex + 1) % vertices.length;
+  const start = vertices[edgeIndex], end = vertices[endIndex];
+  const next = endpointAtLength(start, end.map((value, i) => value - start[i]), meters);
+  if (!isPolygon(space)) {
+    if (meters < .5 || meters > 1000) throw Error('矩形边长应在 0.5 至 1000 米之间。');
+    return {...space, [edgeIndex % 2 ? 'depth' : 'width']:round(meters)};
+  }
+  return {...space, geometry:{kind:'polygon',vertices:validateVertices(vertices.map((point,i) => i === endIndex ? next : point))}};
+}
+
+export function snapPlanPoint(raw, {outlines, previous, radius, enabled = true}) {
+  const distance = point => Math.hypot(raw[0]-point[0], raw[1]-point[1]);
+  const nearest = points => {
+    let best, bestDistance = Infinity;
+    for (const point of points) {
+      const d = distance(point);
+      if (d <= radius && d < bestDistance) { best = point; bestDistance = d; }
+    }
+    return best;
+  };
+  if (enabled) {
+    const vertices = nearest(outlines.flatMap(({points, excluded}) => points.filter((_,i) => i !== excluded)));
+    if (vertices) return {point:vertices,kind:'端点'};
+    const midpoints = nearest(outlines.flatMap(({points, closed, excluded}) => points.flatMap(([x,y], i) => {
+      const next = i + 1 < points.length ? i + 1 : closed ? 0 : -1;
+      if (next === -1 || next === i || i === excluded || next === excluded) return [];
+      return [[round((x + points[next][0])/2),round((y + points[next][1])/2)]];
+    })));
+    if (midpoints) return {point:midpoints,kind:'中点'};
+    if (previous) {
+      const orthogonal = nearest([[raw[0],previous[1]],[previous[0],raw[1]]]);
+      if (orthogonal) return {point:orthogonal.map(round),kind:'正交'};
+    }
+    return {point:raw.map(value => Math.round(value*2)/2),kind:''};
+  }
+  return {point:raw.map(round),kind:''};
+}
 export const PLAN_GEOMETRY_VERSION = '3';
 export const MAX_STROKE_POINTS = 512;
 

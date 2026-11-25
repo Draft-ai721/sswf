@@ -1,10 +1,13 @@
-import {applyStudioActions,assistantFacts} from '../shared/studio-actions.js';
+import {requirementAreas} from '../shared/program-requirements.js';
+import {assistantFacts} from '../shared/studio-actions.js';
+import {previewStudioActions} from '../shared/studio-preview.js';
 import {validateWorkflow} from './workflow-validation.js';
 import {emptyWorkflow,workflowFingerprint,workflowStageText,DESIGN_STAGES,DESIGN_PERSPECTIVES} from '../shared/design-workflow.js';
 import {reserveSite,chargeSite,releaseSite} from './site-ai-quota.js';
 import {aiStatus,resolvedAiConfig,connectionApi} from './ai-connection.js';
 import {aiConfig,allowed,callProvider,AiError} from './ai-provider.js';
 import {modelSnapshot} from './models.js';
+import {finalVersion,finalReviewIndex} from './final-submissions.js';
 const json=(value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}});
 const id=s=>typeof s==='string'&&/^[a-zA-Z0-9-]{1,80}$/.test(s);
 const now=()=>new Date().toISOString();
@@ -19,42 +22,166 @@ function base64(bytes){let s='';for(let n=0;n<bytes.length;n+=16384)s+=String.fr
 function imageBytes(dataUrl){const match=typeof dataUrl==='string'&&dataUrl.match(/^data:image\/(jpeg|png);base64,([A-Za-z0-9+/=]+)$/);if(!match||match[2].length>850000)throw new AiError('模型视图格式无效或过大。',400,'bad_view');const raw=Uint8Array.from(atob(match[2]),x=>x.charCodeAt(0));if(match[1]==='png'?!(raw[0]===137&&raw[1]===80&&raw[2]===78&&raw[3]===71):!(raw[0]===255&&raw[1]===216))throw new AiError('模型视图内容与格式不一致。',400,'bad_view');return raw}
 async function contextFor(p,course,data,bucket,prefix,config,readBody,finalRoom=false){const size=JSON.stringify(core(p,course)).length;if(size>60000)throw new AiError('本次文字材料超过 6 万字符，请精简汇报后再生成。',413,'context_limit');const sources=textSources(p,course);const attachments=[];const views=[];let bytesTotal=0;const selected=data.fileIds||[];if(!Array.isArray(selected)||selected.length>3||new Set(selected).size!==selected.length)throw new AiError('每次最多选择三份材料。',400,'bad_materials');
 for(const fileId of selected){const f=p.files.find(f=>f.id===fileId);if(!f)throw new AiError('所选材料不属于当前项目。',403,'foreign_material');let obj=await bucket.get(prefix+'files/'+fileId);if(!obj||(finalRoom?obj.customMetadata?.purpose!=='final':obj.customMetadata?.project!==p.id))throw new AiError('材料不存在或无权访问。',404,'material_missing');
-if(f.type==='skp'){const m=await modelSnapshot(bucket,prefix,fileId);sources.push({id:'model-'+fileId,label:f.name+' · 模型元数据',readStatus:'metadata',category:f.category||'模型',purpose:f.purpose||'',versionLabel:f.versionLabel||'',text:JSON.stringify({filename:f.name,status:m.status,resultId:m.resultId,metadata:m.metadata||null}),fileId,resultId:m.resultId||null});continue}
-if(f.type==='pdf'&&typeof f.extractedText==='string'&&f.extractedText.trim())sources.push({id:'extracted-'+fileId,label:f.name+' · 浏览器提取文字（需核对）',readStatus:'text-extraction',fileId,text:f.extractedText.slice(0,12000)});if(finalRoom&&config.vision&&f.previewId){const preview=await bucket.get(prefix+'files/'+f.previewId);if(preview?.customMetadata?.parentId===fileId)obj=preview}if(!config.vision||(config.provider==='deepseek'&&obj.customMetadata.type==='pdf')){sources.push({id:'file-'+fileId,label:f.name+' · 仅文件清单',readStatus:'list-only',category:f.category||'未分类',purpose:f.purpose||'',versionLabel:f.versionLabel||'',text:'存在文件 '+f.name+'，本次未读取其内容，不能据此判断图纸。',fileId});continue}
+if(f.type==='skp'){const m=finalRoom?f.conversion||{}:await modelSnapshot(bucket,prefix,fileId);sources.push({id:'model-'+fileId,label:f.name+' · 模型元数据',readStatus:'metadata',category:f.category||'模型',purpose:f.purpose||'',versionLabel:f.versionLabel||'',text:JSON.stringify({filename:f.name,status:m.status,resultId:m.resultId,metadata:m.metadata||null}),fileId,resultId:m.resultId||null});continue}
+if(f.type==='pdf'&&typeof f.extractedText==='string'&&f.extractedText.trim())sources.push({id:'extracted-'+fileId,label:f.name+' · 浏览器提取文字（需核对）',readStatus:'text-extraction',fileId,text:f.extractedText.slice(0,12000)});
+if(finalRoom&&f.type==='pdf'){
+ for(const row of f.pdfPages||[])if(row.text.trim())sources.push({id:'text-'+fileId+'-'+row.page,label:f.name+' · 第 '+row.page+' 页提取文字',readStatus:'text-extraction',fileId,page:row.page,text:row.text});
+ const preview=config.vision&&f.previewId&&await bucket.get(prefix+'files/'+f.previewId);
+ obj=preview?.customMetadata?.parentId===fileId?preview:null;
+}
+if(!config.vision||!obj||(config.provider==='deepseek'&&obj.customMetadata.type==='pdf')){sources.push({id:'file-'+fileId,label:f.name+' · 文件清单',readStatus:'list-only',category:f.category||'未分类',purpose:f.purpose||'',versionLabel:f.versionLabel||'',text:'存在文件 '+f.name+'，此条只提供文件名。',fileId});continue}
 const bytes=await readBody(new Response(obj.body),4*1024*1024);bytesTotal+=bytes.length;if(bytesTotal>4*1024*1024)throw new AiError('所选图纸总量超过 4 MB，请减少或压缩材料。',413,'material_limit');const type=obj.customMetadata.type;if(!['png','jpg','pdf'].includes(type))throw new AiError('当前AI支持PNG、JPG和PDF图纸。',400,'bad_material');const sourceId='file-'+fileId;sources.push({id:sourceId,label:f.name+(obj.customMetadata?.parentId?' · PDF 第 '+obj.customMetadata.page+' 页':''),category:f.category||'未分类',purpose:f.purpose||'',versionLabel:f.versionLabel||'',text:'附件内容见紧随其后的图片或 PDF。来源ID '+sourceId,fileId,sha256:await hash(bytes),attachmentType:type,readStatus:'content',derivedFrom:obj.customMetadata?.parentId?{fileId:obj.customMetadata.parentId,page:Number(obj.customMetadata.page)}:null});attachments.push({type:'input_text',text:'下一个附件的来源ID为 '+sourceId+'，名称 '+f.name});if(type==='pdf')attachments.push({type:'input_file',filename:f.name,file_data:'data:application/pdf;base64,'+base64(bytes)});else attachments.push({type:'input_image',detail:'low',image_url:'data:image/'+(type==='jpg'?'jpeg':'png')+';base64,'+base64(bytes)});
 }
 if(!Array.isArray(data.views||[])||(data.views||[]).length>3)throw new AiError('最多提供三个模型视角。',400,'bad_views');if((data.views||[]).length&&!config.vision)throw new AiError('当前服务仅支持文字点评，不能读取模型视图。',400,'vision_unsupported');
-for(const view of data.views||[]){if(!selected.includes(view.fileId))throw new AiError('模型视图未关联所选材料。',400,'bad_view');const m=await modelSnapshot(bucket,prefix,view.fileId);if(m.status!=='ready'||m.resultId!==view.resultId)throw new AiError('模型视图对应的转换版本已改变，请重新打开模型。',409,'model_changed');const bytes=imageBytes(view.dataUrl);bytesTotal+=bytes.length;if(bytesTotal>5*1024*1024)throw new AiError('图纸与视图总量超过当前预算。',413,'material_limit');const sourceId='view-'+(views.length+1),label=clip(view.label||'模型视图',40);sources.push({id:sourceId,label:'模型视图 · '+label,readStatus:'content',fileId:view.fileId,resultId:view.resultId});views.push({id:sourceId,label,fileId:view.fileId,resultId:view.resultId,sha256:await hash(bytes),dataUrl:view.dataUrl});attachments.push({type:'input_text',text:'下一个模型视图的来源ID '+sourceId+'；视角 '+label+'，只代表当前视角可见的内容。'},{type:'input_image',detail:'low',image_url:view.dataUrl});}
+for(const view of data.views||[]){
+ if(!view||!selected.includes(view.fileId))throw new AiError('模型视图未关联所选材料。',400,'bad_view');
+ const m=finalRoom?p.files.find(f=>f.id===view.fileId)?.conversion:await modelSnapshot(bucket,prefix,view.fileId);
+ if(m?.status!=='ready'||m.resultId!==view.resultId)throw new AiError('模型视图对应的转换版本已改变，请重新打开模型。',409,'model_changed');
+ const camera=view.camera;
+ const coords=v=>Array.isArray(v)&&v.length===3&&v.every(x=>Number.isFinite(x)&&Math.abs(x)<1e10);
+ if(finalRoom&&(!coords(camera?.position)||!coords(camera?.target)))throw new AiError('模型视角缺少可定位的相机信息。',400,'bad_view');
+ const bytes=imageBytes(view.dataUrl);bytesTotal+=bytes.length;
+ if(bytesTotal>5*1024*1024)throw new AiError('图纸与视图总量超过当前预算。',413,'material_limit');
+ const sourceId='view-'+(views.length+1),label=clip(view.label||'模型视图',40);
+ sources.push({id:sourceId,label:'模型视图 · '+label,readStatus:'content',fileId:view.fileId,resultId:view.resultId});
+ views.push({id:sourceId,label,fileId:view.fileId,resultId:view.resultId,sha256:await hash(bytes),dataUrl:view.dataUrl,
+   ...(finalRoom?{camera:{position:camera.position,target:camera.target}}:{})});
+ attachments.push({type:'input_text',text:'下一个模型视图的来源ID '+sourceId+'；视角 '+label+'，只代表当前视角可见的内容。'},{type:'input_image',detail:'low',image_url:view.dataUrl});
+}
 if(sources.length>100)throw new AiError('汇报段落过多，请合并为主要段落。',413,'context_limit');return {context:{projectId:p.id,projectName:p.name,isTeachingExample:p.demo===true,sources},attachments,views}}
+function finalCoverage(files,sources,views){
+ return files.map(file=>{
+   const entries=sources.filter(s=>s.fileId===file.id);
+   const text=entries.filter(s=>s.readStatus==='text-extraction');
+   const images=entries.filter(s=>s.attachmentType&&s.attachmentType!=='pdf');
+   const modelViews=views.filter(v=>v.fileId===file.id).map(v=>({id:v.id,label:v.label}));
+   return {fileId:file.id,name:file.name,type:file.type,textPages:text.map(s=>s.page).filter(Boolean),
+     legacyText:text.some(s=>!s.page),pdfPageCount:file.pdfPageCount,pdfTruncated:file.pdfTruncated,
+     imagePages:images.map(s=>s.derivedFrom?.page).filter(Boolean),imageSent:images.length>0,
+     modelViews,metadataOnly:modelViews.length===0&&file.type==='skp',listOnly:!text.length&&!images.length&&file.type!=='skp'};
+ });
+}
 async function addIndex(bucket,key,run){for(let n=0;n<4;n++){const old=await read(bucket,key);const list=[{id:run.id,kind:run.kind,createdAt:run.createdAt},...(old?.value||[]).filter(x=>x.id!==run.id)].slice(0,40);if(await cas(bucket,key,old,list))return}throw new AiError('生成记录暂时无法登记，请稍后重试。',503,'storage_busy')}
 async function reserve(bucket,key,runId,limit){const day=new Date(Date.now()+8*3600000).toISOString().slice(0,10);for(let n=0;n<4;n++){const old=await read(bucket,key);const value=old?.value.day===day?old.value:{day,count:0};if(value.activeUntil>Date.now())throw new AiError('已有AI任务正在进行，请等待其完成后再操作。',429,'busy');if(value.count>=limit)throw new AiError('今天已达到 '+limit+' 次生成尝试的限额，明天可继续。',429,'daily_limit');const next={day,count:value.count+1,activeRun:runId,activeUntil:Date.now()+85000};if(await cas(bucket,key,old,next))return}throw new AiError('生成请求过于密集，请稍后重试。',429,'busy')}
 async function release(bucket,key,runId){const old=await read(bucket,key);if(old?.value.activeRun===runId)await cas(bucket,key,old,{...old.value,activeRun:null,activeUntil:0})}
+
+function replayAssistant(project, proposal) {
+  let index=0;
+  try{
+    const result=previewStudioActions(project,proposal.actions,proposal.selection,proposal.mode,()=>{
+      const value=proposal.allocatedIds[index++];
+      if(!value)throw Error('预览分配的编号不完整。');
+      return value;
+    });
+    if(index!==proposal.allocatedIds.length)throw Error('预览需要重新生成。');
+    return result;
+  }catch(error){throw new AiError(error.message,409,'proposal_changed')}
+}
+
+async function assistantPreview(bucket,prefix,request,old,project,run,data) {
+  if(run.kind!=='assistant'||run.status!=='succeeded'||!run.output.actions.length)throw new AiError('这条记录没有可预览的画布修改。',400,'not_previewable');
+  if(!['current','copy'].includes(data.mode)||data.optionId!==run.assistantSelection.optionId){
+    throw new AiError('请选择生成建议时的方案。',400,'assistant_selection_invalid');
+  }
+  if(project.aiRunIds?.includes(run.id))throw new AiError('这条建议已有采用记录。',409,'already_applied');
+  if(request.headers.get('If-Match')!==old.etag)throw new AiError('工作稿已更新，请刷新后重试。',409,'state_conflict');
+  if(await fingerprint(project,old.value.course)!==run.fingerprint)throw new AiError('工作稿已变化，请基于当前方案发起新建议。',409,'source_changed');
+  const proposalId=await hash(run.id+':studio-preview:'+data.mode);
+  const key=prefix+'ai/previews/'+proposalId+'.json';
+  let record=await read(bucket,key);
+  if(!record){
+    const proposal={id:proposalId,runId:run.id,projectId:project.id,mode:data.mode,
+      fingerprint:run.fingerprint,selection:run.assistantSelection,actions:run.output.actions,allocatedIds:[]};
+    let result;
+    try{
+      result=previewStudioActions(project,proposal.actions,proposal.selection,proposal.mode,()=>{
+        const value=crypto.randomUUID();proposal.allocatedIds.push(value);return value;
+      });
+    }catch(error){throw new AiError(error.message,400,'invalid_proposal')}
+    if(await cas(bucket,key,null,proposal))return json({proposalId,preview:result.preview});
+    record=await read(bucket,key);
+    if(!record)throw new AiError('预览正在保存，请稍后重试。',503,'storage_busy');
+  }
+  return json({proposalId,preview:replayAssistant(project,record.value).preview});
+}
+
+function assistantReceipt(project,run,proposalId){
+  const receipt=project.aiAssistantReceipts?.find(item=>item.runId===run.id);
+  if(receipt?.proposalId===proposalId)return receipt.result;
+  if(run.assistantProposalId===proposalId&&run.assistantResult)return run.assistantResult;
+  return null;
+}
 export async function aiApi(request,env,prefix,helpers){const url=new URL(request.url);if(!url.pathname.startsWith('/api/ai/'))return null;let c;const bucket=env.BUCKET,{readJson,limitedBody}=helpers;const stateKey=prefix+'state.json';
 try{
 const connectionResponse=await connectionApi(request,env,prefix,helpers);if(connectionResponse)return connectionResponse;
 if(url.pathname==='/api/ai/runs'&&request.method==='GET'){const project=url.searchParams.get('projectId');if(!id(project))throw new AiError('项目无效。',400,'bad_project');const state=await read(bucket,stateKey);if(!state?.value.projects.some(p=>p.id===project))throw new AiError('项目不存在。',404,'project_missing');const index=await read(bucket,prefix+'ai/index/'+project+'.json');const runs=[];for(const entry of (index?.value||[]).slice(0,15)){const r=await read(bucket,prefix+'ai/runs/'+entry.id+'.json');if(r)runs.push({id:r.value.id,kind:r.value.kind,status:r.value.status,createdAt:r.value.createdAt,provider:r.value.provider,model:r.value.model,designStage:r.value.designStage||null,perspective:r.value.perspective||null,appliedAt:r.value.appliedAt||null})}return json({runs})}
-const match=url.pathname.match(/^\/api\/ai\/runs\/([a-zA-Z0-9-]{1,80})(?:\/(apply))?$/);
+const match=url.pathname.match(/^\/api\/ai\/runs\/([a-zA-Z0-9-]{1,80})(?:\/(apply|preview))?$/);
 if(match){const runKey=prefix+'ai/runs/'+match[1]+'.json',record=await read(bucket,runKey);if(!record)throw new AiError('生成记录不存在或你无权访问。',404,'run_missing');const run=record.value;if(!match[2]&&request.method==='GET')return json({run});
-if(match[2]==='apply'&&request.method==='POST'){if(run.finalRoomId)throw new AiError('终评记录已保存在作品中。',400,'final_review');if(run.kind==='followup')throw new AiError('追问回答独立保存在对话记录中，请自行判断和改写。',400,'followup_reference');if(run.status!=='succeeded')throw new AiError('本次生成尚未成功，不能写入工作台。',409,'not_ready');const old=await read(bucket,stateKey),p=old?.value.projects.find(p=>p.id===run.projectId);if(!p)throw new AiError('项目不存在。',404,'project_missing');if(request.headers.get('If-Match')!==old.etag)throw new AiError('工作稿已在其他位置变化，请刷新后再写入。',409,'state_conflict');if(p.aiRunIds?.includes(run.id))return json({state:old.value,etag:old.etag,alreadyApplied:true});if(await fingerprint(p,old.value.course)!==run.fingerprint)throw new AiError('材料或汇报已修改，本次AI结果基于旧版本。请查看原始依据或重新生成。',409,'source_changed');
-let assistantResult=null;if(run.kind==='assistant'){const result=applyStudioActions(p,run.output.actions,run.assistantSelection);result.project.workflow=validateWorkflow(result.project.workflow,p.workflow,result.project);Object.assign(p,result.project);assistantResult={summary:result.summary,optionId:result.optionId,createdIds:result.createdIds,changedIds:result.changedIds};}
+if(match[2]==='preview'&&request.method==='POST'){
+ const old=await read(bucket,stateKey),project=old?.value.projects.find(item=>item.id===run.projectId);
+ if(!project)throw new AiError('项目不存在。',404,'project_missing');
+ return await assistantPreview(bucket,prefix,request,old,project,run,await readJson(request,4000));
+}
+if(match[2]==='apply'&&request.method==='POST'){if(run.finalRoomId)throw new AiError('终评记录已保存在作品中。',400,'final_review');if(run.kind==='followup')throw new AiError('追问回答独立保存在对话记录中，请自行判断和改写。',400,'followup_reference');if(run.status!=='succeeded')throw new AiError('本次生成尚未成功，不能写入工作台。',409,'not_ready');const old=await read(bucket,stateKey),p=old?.value.projects.find(p=>p.id===run.projectId);if(!p)throw new AiError('项目不存在。',404,'project_missing');
+let proposalId='';
+if(run.kind==='assistant'){
+ const data=request.body?await readJson(request,4000):{};
+ proposalId=data.proposalId;
+ if(typeof proposalId!=='string'||!/^[a-f0-9]{64}$/.test(proposalId))throw new AiError('请先预览并确认要采用的修改。',400,'preview_required');
+ if(p.aiRunIds?.includes(run.id)){
+   const result=assistantReceipt(p,run,proposalId);
+   if(!result)throw new AiError('本次建议已通过另一项预览采用。',409,'already_applied');
+   return json({state:old.value,etag:old.etag,alreadyApplied:true,assistantResult:result});
+ }
+}
+if(request.headers.get('If-Match')!==old.etag)throw new AiError('工作稿已在其他位置变化，请刷新后再写入。',409,'state_conflict');if(p.aiRunIds?.includes(run.id))return json({state:old.value,etag:old.etag,alreadyApplied:true});if(await fingerprint(p,old.value.course)!==run.fingerprint)throw new AiError('材料或汇报已修改，本次AI结果基于旧版本。请查看原始依据或重新生成。',409,'source_changed');
+let assistantResult=null;
+if(run.kind==='assistant'){
+ const proposal=(await read(bucket,prefix+'ai/previews/'+proposalId+'.json'))?.value;
+ if(!proposal||proposal.runId!==run.id||proposal.projectId!==p.id||proposal.fingerprint!==run.fingerprint)throw new AiError('预览不存在或已过期，请重新预览。',409,'proposal_changed');
+ const {project,preview}=replayAssistant(p,proposal);
+ project.workflow=validateWorkflow(project.workflow,p.workflow,project);
+ Object.assign(p,project);
+ const {summary,optionId,createdIds,changedIds}=preview;
+ assistantResult={summary,optionId,createdIds,changedIds};
+ p.aiAssistantReceipts=[...(p.aiAssistantReceipts||[]),{runId:run.id,proposalId,result:assistantResult}].slice(-40);
+}
 else if(run.kind==='layout'){p.workflow=p.workflow||emptyWorkflow(p);if(p.workflow.aiCandidates.length>=60)throw new AiError('候选区已达到60条，请保留生成记录并整理现有设计。',400,'candidate_limit');const out=run.output;p.workflow.aiCandidates.push({id:await hash(run.id+':layout'),runId:run.id,stage:4,perspective:run.perspective,proposal:{title:out.title,strategy:out.strategy,actions:['布置了 '+out.plan.spaces.length+' 个可编辑空间块。','请结合功能清单与几何检查继续调整。'],sourceIds:out.sourceIds,checks:out.checks},layout:out.plan,createdAt:run.createdAt,provider:run.provider,model:run.model});}
 else if(run.kind==='design'){p.workflow=p.workflow||emptyWorkflow(p);if(p.workflow.aiCandidates.length+run.output.proposals.length>60)throw new AiError('本项目已保存60个设计候选，请保留生成记录并在方案区整理现有候选。',400,'candidate_limit');for(let i=0;i<run.output.proposals.length;i++)p.workflow.aiCandidates.push({id:await hash(run.id+':'+i),runId:run.id,stage:run.designStage,perspective:run.perspective,proposal:run.output.proposals[i],createdAt:run.createdAt,provider:run.provider,model:run.model});}
 else if(run.kind==='draft'){p.draft=run.output.paragraphs.map(x=>x.heading+'\n'+x.text+(x.missingEvidence.length?'\n待补充：'+x.missingEvidence.join('；'):'' )+'\n依据：'+x.sourceIds.map(id=>run.sources.find(s=>s.id===id)?.label||id).join('、')).join('\n\n');p.aiDraft={runId:run.id,source:'AI · '+run.provider+' · '+run.model,createdAt:run.createdAt,questions:run.output.questions};p.stage=Math.max(p.stage,1);}
 else{p.feedback.push(...run.output.comments.map((f,i)=>({...f,id:run.id+'-'+i,location:run.sources.find(s=>s.id===f.sourceId)?.label||'项目材料',status:'待回应',source:'AI · '+run.provider+' · '+run.model,sourceKind:'ai',runId:run.id,version:'生成依据 '+run.createdAt,materialViewLabel:run.views?.find(v=>v.id===f.sourceId)?.label||null,materialVersionId:run.sources.find(s=>s.id===f.sourceId)?.resultId||null,materialFileId:run.sources.find(s=>s.id===f.sourceId)?.fileId||null,response:null,history:[]})));p.stage=Math.max(p.stage,3)}
-p.aiRunIds=[...(p.aiRunIds||[]),run.id];p.updatedAt=now();old.value.updatedAt=now();if(new TextEncoder().encode(JSON.stringify(old.value)).length>4*1024*1024)throw new AiError('项目档案已达到容量上限，请先导出记录。',413,'state_limit');const saved=await cas(bucket,stateKey,old,old.value);if(!saved)throw new AiError('保存发生冲突，请刷新后重新写入。',409,'state_conflict');await cas(bucket,runKey,record,{...run,appliedAt:now(),...(assistantResult?{assistantResult}:{})});return json({state:old.value,etag:saved.etag,...(assistantResult?{assistantResult}:{})})}
+p.aiRunIds=[...(p.aiRunIds||[]),run.id];p.updatedAt=now();old.value.updatedAt=now();if(new TextEncoder().encode(JSON.stringify(old.value)).length>4*1024*1024)throw new AiError('项目档案已达到容量上限，请先导出记录。',413,'state_limit');const saved=await cas(bucket,stateKey,old,old.value);if(!saved)throw new AiError('保存发生冲突，请刷新后重新写入。',409,'state_conflict');await cas(bucket,runKey,record,{...run,appliedAt:now(),...(assistantResult?{assistantResult,assistantProposalId:proposalId}:{})});return json({state:old.value,etag:saved.etag,...(assistantResult?{assistantResult}:{})})}
 throw new AiError('不支持此操作。',405,'method_not_allowed')}
 if(url.pathname==='/api/ai/generate'&&request.method==='POST'){
 c=await resolvedAiConfig(env,bucket,prefix);if(!c.configured)throw new AiError('网站 AI 尚未启用，请联系管理员完成网站服务配置。',503,'not_configured');if(!allowed(c,request))throw new AiError('当前账号尚未获得AI调用权限，请联系网站管理者。',403,'ai_forbidden');
-const data=await readJson(request,3*1024*1024);if(!id(data.projectId)||!id(data.requestId)||!['draft','review','followup','design','layout','assistant'].includes(data.kind))throw new AiError('生成请求格式不正确。',400,'bad_request');if(['design','layout'].includes(data.kind)&&(!Number.isInteger(data.designStage)||data.designStage<1||data.designStage>6||typeof data.designObjective!=='string'||!data.designObjective.trim()||data.designObjective.length>2000||!DESIGN_PERSPECTIVES.includes(data.perspective)))throw new AiError('请明确设计阶段、生成目标与讨论视角。',400,'bad_design_request');if(data.kind==='layout'&&(!data.layoutCanvas||!['width','depth'].every(k=>typeof data.layoutCanvas[k]==='number'&&Number.isFinite(data.layoutCanvas[k])&&data.layoutCanvas[k]>=1&&data.layoutCanvas[k]<=1000)||data.designStage!==4))throw new AiError('请设置1至1000米的布局画布。',400,'bad_layout_request');if(data.kind==='layout')data.layoutCanvas={width:data.layoutCanvas.width,depth:data.layoutCanvas.depth};if(data.kind==='assistant'){if(typeof data.assistantInput!=='string'||!data.assistantInput.trim()||data.assistantInput.length>2000||!data.assistantSelection||!id(data.assistantSelection.optionId)||!Array.isArray(data.assistantSelection.spaceIds)||data.assistantSelection.spaceIds.length>10||data.assistantSelection.spaceIds.some(s=>!id(s))||!Array.isArray(data.assistantMessages||[])||(data.assistantMessages||[]).length>6||(data.assistantMessages||[]).some(m=>!['user','assistant'].includes(m.role)||typeof m.text!=='string'||m.text.length>2000))throw new AiError('对话或当前选择无效，请重新选择方案。',400,'assistant_request_invalid')}const runKey=prefix+'ai/runs/'+data.requestId+'.json';const existing=await read(bucket,runKey);if(existing){if((existing.value.finalRoomId||null)!==(data.finalRoomId||null)||existing.value.projectId!==data.projectId||existing.value.kind!==data.kind||(data.kind==='assistant'&&(existing.value.assistantInput!==data.assistantInput||JSON.stringify(existing.value.assistantSelection)!==JSON.stringify(data.assistantSelection)))||(['design','layout'].includes(data.kind)&&(existing.value.designStage!==data.designStage||existing.value.designObjective!==data.designObjective||existing.value.perspective!==data.perspective||(data.kind==='layout'&&JSON.stringify(existing.value.layoutCanvas)!==JSON.stringify(data.layoutCanvas))))||(data.kind==='followup'&&(existing.value.question!==data.question||existing.value.rootRunId!==data.rootRunId||existing.value.commentIndex!==data.commentIndex||existing.value.parentRunId!==(data.parentRunId||null))))throw new AiError('请求编号已用于其他任务。',409,'request_conflict');return json({run:existing.value},existing.value.status==='running'?202:200)}
-let state,p;
+const data=await readJson(request,3*1024*1024);if(!id(data.projectId)||!id(data.requestId)||!['draft','review','followup','design','layout','assistant'].includes(data.kind))throw new AiError('生成请求格式不正确。',400,'bad_request');if(['design','layout'].includes(data.kind)&&(!Number.isInteger(data.designStage)||data.designStage<1||data.designStage>6||typeof data.designObjective!=='string'||!data.designObjective.trim()||data.designObjective.length>2000||!DESIGN_PERSPECTIVES.includes(data.perspective)))throw new AiError('请明确设计阶段、生成目标与讨论视角。',400,'bad_design_request');if(data.kind==='layout'&&(!data.layoutCanvas||!['width','depth'].every(k=>typeof data.layoutCanvas[k]==='number'&&Number.isFinite(data.layoutCanvas[k])&&data.layoutCanvas[k]>=1&&data.layoutCanvas[k]<=1000)||data.designStage!==4))throw new AiError('请设置1至1000米的布局画布。',400,'bad_layout_request');if(data.kind==='layout')data.layoutCanvas={width:data.layoutCanvas.width,depth:data.layoutCanvas.depth};if(data.kind==='assistant'){if(typeof data.assistantInput!=='string'||!data.assistantInput.trim()||data.assistantInput.length>2000||!data.assistantSelection||!id(data.assistantSelection.optionId)||!Array.isArray(data.assistantSelection.spaceIds)||data.assistantSelection.spaceIds.length>10||data.assistantSelection.spaceIds.some(s=>!id(s))||!Array.isArray(data.assistantMessages||[])||(data.assistantMessages||[]).length>6||(data.assistantMessages||[]).some(m=>!['user','assistant'].includes(m.role)||typeof m.text!=='string'||m.text.length>2000))throw new AiError('对话或当前选择无效，请重新选择方案。',400,'assistant_request_invalid')}
+let finalRoom=null,finalSnapshot=null;
 if(data.finalRoomId){
  if(data.kind!=='review'||!id(data.finalRoomId)||data.projectId!=='final-'+data.finalRoomId)throw new AiError('终评请求无效。',400,'bad_final');
- const rec=await read(bucket,'review-rooms/'+data.finalRoomId+'.json'),room=rec?.value;
+ finalRoom=await read(bucket,'review-rooms/'+data.finalRoomId+'.json');
+ const room=finalRoom?.value;
  if(room?.kind!=='final'||room.ownerPrefix!==prefix)throw new AiError('作品不存在或无权请求点评。',403,'foreign_final');
- state={etag:rec.etag,value:{course:room.course}};p={...room.version.snapshot,id:data.projectId};
+ if(data.submissionVersionId!==undefined&&!id(data.submissionVersionId))throw new AiError('终评版本无效。',400,'bad_final_version');
+ data.submissionVersionId??=room.version.id;
+ try{finalSnapshot=await finalVersion(bucket,room,data.submissionVersionId)}
+ catch(error){throw new AiError(error.message,error.status||500,'final_version_missing')}
+}
+const runKey=prefix+'ai/runs/'+data.requestId+'.json';
+const retry=previous=>{
+ if((previous.finalRoomId||null)!==(data.finalRoomId||null)||previous.projectId!==data.projectId||previous.kind!==data.kind||(data.kind==='assistant'&&(previous.assistantInput!==data.assistantInput||JSON.stringify(previous.assistantSelection)!==JSON.stringify(data.assistantSelection)))||(['design','layout'].includes(data.kind)&&(previous.designStage!==data.designStage||previous.designObjective!==data.designObjective||previous.perspective!==data.perspective||(data.kind==='layout'&&JSON.stringify(previous.layoutCanvas)!==JSON.stringify(data.layoutCanvas))))||(data.kind==='followup'&&(previous.question!==data.question||previous.rootRunId!==data.rootRunId||previous.commentIndex!==data.commentIndex||previous.parentRunId!==(data.parentRunId||null)))||
+   (finalRoom&&(previous.submissionVersionId||finalRoom.value.version.id)!==data.submissionVersionId)){
+   throw new AiError('请求编号已用于其他任务。',409,'request_conflict');
+ }
+ return json({run:previous},previous.status==='running'?202:200);
+};
+const existing=await read(bucket,runKey);
+if(existing)return retry(existing.value);
+let state,p;
+if(finalRoom){
+ state={etag:finalRoom.etag,value:{course:finalRoom.value.course}};p={...finalSnapshot.snapshot,id:data.projectId};
  data.fileIds=p.files.map(f=>f.id);if(!c.vision)data.views=[];
 }else{state=await read(bucket,stateKey);p=state?.value.projects.find(p=>p.id===data.projectId)}
-if(!p)throw new AiError('项目不存在或无权访问。',404,'project_missing');if(request.headers.get('If-Match')!==state.etag)throw new AiError('请先保存最新汇报，再生成AI内容。',409,'state_conflict');if(data.kind==='assistant'){const option=p.workflow?.options.find(o=>o.id===data.assistantSelection.optionId);if(!option||data.assistantSelection.spaceIds.some(id=>!option.plan?.spaces.some(s=>s.id===id)))throw new AiError('当前选择不属于此项目或已变化。',400,'assistant_selection_invalid')}if(data.kind==='layout'&&(!p.workflow?.program?.length||p.workflow.program.some(r=>r.area<=0)||p.workflow.program.reduce((n,r)=>n+r.count,0)>24))throw new AiError('布局生成需要已保存的正数功能面积，需求总数量最多24个；较大的项目可先手动推演。',400,'layout_program_required');if(!data.finalRoomId&&data.kind==='review'&&!p.report.trim())throw new AiError('请先写个人汇报稿，再发起点评。',400,'report_missing');
+if(!p)throw new AiError('项目不存在或无权访问。',404,'project_missing');if(request.headers.get('If-Match')!==state.etag)throw new AiError('请先保存最新汇报，再生成AI内容。',409,'state_conflict');if(data.kind==='assistant'){const option=p.workflow?.options.find(o=>o.id===data.assistantSelection.optionId);if(!option||data.assistantSelection.spaceIds.some(id=>!option.plan?.spaces.some(s=>s.id===id)))throw new AiError('当前选择不属于此项目或已变化。',400,'assistant_selection_invalid')}if(data.kind==='layout'&&(!p.workflow?.program?.length||p.workflow.program.some(r=>!(requirementAreas(r).referenceEachM2>0))||p.workflow.program.reduce((n,r)=>n+r.count,0)>24))throw new AiError('布局生成需要已保存的正数功能面积，需求总数量最多24个；较大的项目可先手动推演。',400,'layout_program_required');if(!data.finalRoomId&&data.kind==='review'&&!p.report.trim())throw new AiError('请先写个人汇报稿，再发起点评。',400,'report_missing');
 let prepared,thread={};if(data.kind==='followup'){
  if(!id(data.rootRunId)||!Number.isInteger(data.commentIndex)||typeof data.question!=='string'||!data.question.trim()||data.question.length>2000)throw new AiError('请填写有效的点评追问。',400,'bad_followup');
  const root=(await read(bucket,prefix+'ai/runs/'+data.rootRunId+'.json'))?.value;
@@ -66,12 +193,13 @@ let prepared,thread={};if(data.kind==='followup'){
  }else prepared=await contextFor(p,state.value.course,data,bucket,prefix,c,limitedBody,!!data.finalRoomId);
  if(data.finalRoomId){
    thread.finalRoomId=data.finalRoomId;
+   thread.submissionVersionId=finalSnapshot.id;
+   thread.coverage=finalCoverage(p.files,prepared.context.sources,prepared.views);
+   Object.assign(prepared.context,{submissionVersionId:finalSnapshot.id,versionNumber:finalSnapshot.number,coverage:thread.coverage});
    if(p.drawing)prepared.context.sources.push({id:'submitted-plan',label:'提交方案的平面数据',text:JSON.stringify(p.drawing.plan).slice(0,18000)});
-   if(!p.report.trim()&&!p.drawing&&!prepared.context.sources.some(s=>s.readStatus==='content'||s.readStatus==='text-extraction'))
-     throw new AiError('本次模型无法读取展板图像。请使用含可提取文字的 PDF，或在提交时附设计说明。',400,'no_final_evidence');
- }if(['design','layout'].includes(data.kind)){thread={designStage:data.designStage,designObjective:data.designObjective,perspective:data.perspective};if(data.kind==='layout')Object.assign(thread,{layoutCanvas:data.layoutCanvas,layoutProgram:structuredClone(p.workflow.program),layoutRelationships:structuredClone(p.workflow.relationships||[])});Object.assign(prepared.context,thread);if(!p.workflow)prepared.context.sources.push({id:'workflow-'+data.designStage,label:DESIGN_STAGES[data.designStage-1].name,text:workflowStageText(p,data.designStage)})}if(data.kind==='assistant'){thread={assistantInput:data.assistantInput,assistantSelection:data.assistantSelection,assistantMessages:data.assistantMessages||[]};Object.assign(prepared.context,thread,{assistantFacts:assistantFacts(p,data.assistantSelection),studioProject:{name:p.name,workflow:{...emptyWorkflow(p),program:p.workflow.program,options:p.workflow.options}}})}const run={id:data.requestId,kind:data.kind,funding:c.managed?'website':c.personal?'personal':'shared',...thread,projectId:p.id,status:'running',provider:c.label,model:c.model,createdAt:now(),fingerprint:await fingerprint(p,state.value.course),sources:prepared.context.sources,views:prepared.views,teachingExample:p.demo===true,usage:null};
-if(!await cas(bucket,runKey,null,run)){const other=await read(bucket,runKey);return json({run:other.value},202)}
-const quotaKey=prefix+(c.managed?'ai/site-quota.json':'ai/quota.json'),siteLease=c.managed?await hash(prefix+run.id):null;let reserved=false,siteReserved=false;try{if(c.managed){await reserveSite(bucket,siteLease,c.siteDailyLimit);siteReserved=true}await reserve(bucket,quotaKey,run.id,c.dailyLimit);reserved=true;if(c.managed)await chargeSite(bucket,siteLease,c.siteDailyLimit);await addIndex(bucket,prefix+'ai/index/'+p.id+'.json',run);const result=await callProvider(c,data.kind,prepared.context,prepared.attachments,limitedBody);const done={...run,status:'succeeded',completedAt:now(),...result};await bucket.put(runKey,JSON.stringify(done),{httpMetadata:{contentType:'application/json'}});return json({run:done});}
+ }if(['design','layout'].includes(data.kind)){thread={designStage:data.designStage,designObjective:data.designObjective,perspective:data.perspective};if(data.kind==='layout')Object.assign(thread,{layoutCanvas:data.layoutCanvas,layoutProgram:p.workflow.program.map(row=>({...row,area:requirementAreas(row).referenceEachM2,...requirementAreas(row)})),layoutRelationships:structuredClone(p.workflow.relationships||[])});Object.assign(prepared.context,thread);if(!p.workflow)prepared.context.sources.push({id:'workflow-'+data.designStage,label:DESIGN_STAGES[data.designStage-1].name,text:workflowStageText(p,data.designStage)})}if(data.kind==='assistant'){thread={assistantInput:data.assistantInput,assistantSelection:data.assistantSelection,assistantMessages:data.assistantMessages||[]};Object.assign(prepared.context,thread,{assistantFacts:assistantFacts(p,data.assistantSelection),studioProject:{name:p.name,workflow:{...emptyWorkflow(p),program:p.workflow.program,options:p.workflow.options}}})}const run={id:data.requestId,kind:data.kind,funding:c.managed?'website':c.personal?'personal':'shared',...thread,projectId:p.id,status:'running',provider:c.label,model:c.model,createdAt:now(),fingerprint:await fingerprint(p,state.value.course),sources:prepared.context.sources,views:prepared.views,teachingExample:p.demo===true,usage:null};
+if(!await cas(bucket,runKey,null,run)){const other=await read(bucket,runKey);return retry(other.value)}
+const quotaKey=prefix+(c.managed?'ai/site-quota.json':'ai/quota.json'),siteLease=c.managed?await hash(prefix+run.id):null;let reserved=false,siteReserved=false;try{if(c.managed){await reserveSite(bucket,siteLease,c.siteDailyLimit);siteReserved=true}await reserve(bucket,quotaKey,run.id,c.dailyLimit);reserved=true;if(c.managed)await chargeSite(bucket,siteLease,c.siteDailyLimit);await addIndex(bucket,finalRoom?finalReviewIndex(prefix,data.finalRoomId,finalSnapshot.id):prefix+'ai/index/'+p.id+'.json',run);const result=await callProvider(c,data.kind,prepared.context,prepared.attachments,limitedBody);const done={...run,status:'succeeded',completedAt:now(),...result};await bucket.put(runKey,JSON.stringify(done),{httpMetadata:{contentType:'application/json'}});return json({run:done});}
 catch(e){const safe=e instanceof AiError?e:new AiError('生成记录暂时无法保存。请查看历史记录，避免重复调用。',503,'storage_error');await bucket.put(runKey,JSON.stringify({...run,status:'failed',completedAt:now(),error:safe.message,errorCode:safe.code}),{httpMetadata:{contentType:'application/json'}});throw safe}finally{try{if(reserved)await release(bucket,quotaKey,run.id)}finally{if(siteReserved)await releaseSite(bucket,siteLease)}}
 }
 throw new AiError('接口不存在。',404,'not_found');

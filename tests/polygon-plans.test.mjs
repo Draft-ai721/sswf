@@ -9,6 +9,7 @@ import {createStudioServer} from '../server/index.mjs';
 import {createSeed} from '../src/data.js';
 import {reportHtml} from '../src/reports.js';
 import {validateOutput} from '../worker/ai-contract.js';
+import {endpointAtLength,snapPlanPoint} from '../shared/plan-geometry.js';
 
 const vertices = [[2,3],[10,3],[10,6],[6,6],[6,9],[2,9]];
 const legacy = {id:'outline', programId:'reading', label:'阅览', x:2, y:3, width:8, depth:6, height:3};
@@ -16,6 +17,32 @@ const outline = {id:'outline', programId:'reading', label:'阅览', height:3, ge
 const inset = {id:'inset', programId:'meeting', x:7, y:7, width:2, depth:1, height:3};
 const program = [{id:'reading', name:'阅读', count:1, area:36}, {id:'meeting', name:'交流', count:1, area:2}];
 const planWith = (...spaces) => ({width:20, depth:15, spaces});
+
+test('Precise edges preserve geometry representation and reject stale or invalid edits', () => {
+  const p = prepareStudio({id:'precision',name:'精确绘图'});
+  p.workflow.program = program;
+  const option = p.workflow.options[0];
+  option.plan = planWith(outline,{...legacy,id:'rectangle'});
+  const edit = (targetId,edgeIndex,meters,expectedFootprint=vertices) =>
+    applyStudioActions(p,[{type:'set_edge_length',targetId,edgeIndex,meters,expectedFootprint}]).project.workflow.options[0].plan;
+  assert.deepEqual(endpointAtLength([2,3],[3,4],3.75),[4.25,6]);
+  assert.deepEqual(edit('outline',2,3.75).spaces[0].geometry.vertices[3],[6.25,6]);
+  assert.deepEqual(edit('outline',5,5).spaces[0].geometry.vertices[0],[2,4]);
+  assert.equal(edit('rectangle',2,3.75,[[2,3],[10,3],[10,9],[2,9]]).spaces[1].width,3.75);
+  assert.throws(()=>edit('outline',2,4,vertices.slice(1)),/轮廓已变化/);
+  assert.throws(()=>edit('outline',2,8.5),/不能交叉/);
+  assert.deepEqual(option.plan.spaces[0].geometry.vertices,vertices);
+});
+
+test('Snapping prioritizes endpoints then midpoints and orthogonal alignment, with a precision bypass', () => {
+  const outlines=[{points:vertices,closed:true}];
+  const snap=(point,options={})=>snapPlanPoint(point,{outlines,radius:.25,previous:[2,3],...options});
+  assert.deepEqual(snap([2.2,3]),{point:[2,3],kind:'端点'});
+  assert.deepEqual(snap([6.1,3.15]),{point:[6,3],kind:'中点'});
+  assert.deepEqual(snap([7.12,3.09]),{point:[7.12,3],kind:'正交'});
+  assert.deepEqual(snap([7.123,3.09],{enabled:false}),{point:[7.12,3.09],kind:''});
+  assert.deepEqual(snap([2.2,3],{radius:.1}),{point:[2.2,3],kind:'正交'});
+});
 
 test('Legacy rectangles and concave polygons retain identity and derive true area', () => {
   assert.deepEqual(validatePlan(planWith(legacy), program).spaces[0], legacy);

@@ -1,8 +1,19 @@
 import {createConversions,MODEL_STATUS} from './conversion-client.js';
 import {pdfSheet} from './final-pdf.js';
 import {esc} from './materials.js';
-import {extractTaskText,reviewCover} from './studio-pdf.js';
+import {extractReviewPdf,reviewCover} from './studio-pdf.js';
+import {revisionBase} from './concept-room.js';
 import {planSvg,axonSvg} from '../shared/space-planning.js';
+
+const date=value=>new Date(value).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false});
+export const finalVersionUrl=(room,versionId=room.version.id)=>'/api/review-rooms/'+room.id+'/versions/'+versionId;
+
+export function coverageText(row){
+  return [row.textPages?.length?'第 '+row.textPages.join('、')+' 页文字':'',row.legacyText?'旧版提取文字':'',
+    row.pdfTruncated?'文字提取有截断':'',row.imagePages?.length?'第 '+row.imagePages.join('、')+' 页图像':row.imageSent?'原图':'' ,
+    row.modelViews?.length?row.modelViews.map(view=>view.label).join('、')+'视图':'',
+    row.metadataOnly?'仅模型元数据':'',row.listOnly?'仅材料名称':''].filter(Boolean).join(' · ');
+}
 
 export function submissionPage(projects, guest) {
   if(guest)return '<section class="work-page"><h1>提交作品</h1><a class="btn primary" href="/login?return_to=%2F%23%2Ffinal-new">登录后上传</a></section>';
@@ -25,8 +36,8 @@ export async function uploadFinalFiles(files,api,status,cache=new Map()) {
     if(!cache.has(file)){
       status('正在上传 '+file.name);
       const {file:stored}=await api('/api/final-files?name='+encodeURIComponent(file.name),{method:'POST',body:file});
-      let extractedText='';
-      if(stored.type==='pdf'){try{extractedText=await extractTaskText(file)}catch{/* The original remains available to the reviewer. */}}
+      let text={};
+      if(stored.type==='pdf'){try{text=await extractReviewPdf(file)}catch{/* The original remains available to the reviewer. */}}
       let previewId=null;
       if(stored.type==='pdf'){
         try{
@@ -38,7 +49,7 @@ export async function uploadFinalFiles(files,api,status,cache=new Map()) {
         const conversions=createConversions({api,update(id,state){status(file.name+' · '+(MODEL_STATUS[state.status]||state.status)+(state.error?' · '+state.error:''))},onReady(){}});
         await conversions.start(stored);
       }
-      cache.set(file,{id:stored.id,extractedText,previewId});
+      cache.set(file,{id:stored.id,...text,previewId});
     }
     result.push(cache.get(file));
   }
@@ -57,31 +68,77 @@ export async function submitWork(form,api) {
     location.hash='#/final/'+result.room.id;
   }catch(e){status(e.message);throw e}
 }
+
+export function finalRevisionFields(room){
+  const work=room.version.snapshot;
+  return `<form id="room-final-revision-form" class="submission-fields" data-version="${esc(room.version.id)}">
+    ${work.files.length?`<fieldset><legend>沿用上一版原件</legend>${work.files.map(file=>
+      `<label class="final-keep"><input type="checkbox" name="keepFile" value="${esc(file.id)}" checked> ${esc(file.name)}</label>`).join('')}</fieldset>`:''}
+    ${work.drawing?'<label class="final-keep"><input type="checkbox" name="keepDrawing" checked> 沿用上一版的平面与体块</label>':''}
+    <label>新增或替换材料<input type="file" name="files" multiple accept=".skp,.pdf,.jpg,.jpeg,.png"><small>取消勾选要替换的原件。新一版合计最多 3 份，每份 20 MB。</small></label>
+    <label>修订说明<textarea name="note" required maxlength="3000" rows="4"></textarea></label>
+    <label>本版设计说明（选填）<textarea name="focus" maxlength="3000" rows="3">${esc(work.description)}</textarea></label>
+    <button type="submit" class="btn primary">提交此版</button><output aria-live="polite"></output></form>`;
+}
+
+export async function finalRevisionData(form,api){
+  const fields=new FormData(form),files=[...form.elements.files.files],kept=fields.getAll('keepFile').map(id=>({id}));
+  const keepDrawing=fields.has('keepDrawing');
+  if(keepDrawing&&files.length)throw Error('上传替换材料前，请取消沿用平面与体块。');
+  if(!keepDrawing&&(kept.length+files.length<1||kept.length+files.length>3))throw Error('每版需要一至三份材料。');
+  const status=message=>form.querySelector('output').textContent=message;
+  const uploaded=files.length?await uploadFinalFiles(files,api,status,form.uploadCache||=new Map()):[];
+  status('正在保存修订件…');
+  return {parentVersionId:form.dataset.version,keepDrawing,files:[...kept,...uploaded],note:fields.get('note'),focus:fields.get('focus'),
+    requestId:form.requestId||=crypto.randomUUID()};
+}
+
 export function finalList(list,tab) {
   const rows=list.filter(r=>r.kind==='final' && (tab==='received'?r.role!=='owner':r.role==='owner'));
   return `<section class="work-page"><div class="work-heading"><h1>最终评审</h1><a class="btn primary" href="#/final-new">＋ 提交作品</a></div>
     <nav class="work-tabs" aria-label="评审范围">${[['mine','我提交的'],['received','邀请我评阅的']].map(([key,name])=>`<a href="#/finals/${key}" ${tab===key?'aria-current="page"':''}>${name}</a>`).join('')}</nav>
-    ${rows.map(r=>`<a class="work-row" href="#/final/${esc(r.id)}"><strong>${esc(r.title)}</strong><small>${esc(r.verdict||'待评阅')}</small><span>→</span></a>`).join('')||`<p class="work-empty">${tab==='mine'?'还没有提交作品。可以直接上传已有展板。':'接受老师评阅邀请后，作品会显示在这里。'}</p>`}</section>`;
+    ${rows.map(r=>`<a class="work-row" href="#/final/${esc(r.id)}"><strong>${esc(r.title)}</strong><small>V${r.versionNumber} · ${r.verdicts?.length?esc(r.verdicts.map(v=>v.author+' '+v.decision).join(' / ')):r.versionNumber>1?'待复核':'待评阅'}${r.pending?' · '+r.pending+' 条待处理':''}</small><span>→</span></a>`).join('')||`<p class="work-empty">${tab==='mine'?'还没有提交作品。可以直接上传已有展板。':'接受老师评阅邀请后，作品会显示在这里。'}</p>`}</section>`;
 }
-export function finalDesk(room,{selected,tab,material,aiBusy,pdfPage}) {
+export function finalDesk(room,{selected,tab,material,aiBusy,pdfPage,comparison,loading}) {
   const work=room.version.snapshot, owner=room.role==='owner', reviewer=room.role==='reviewer';
   const file=work.files.find(f=>f.id===selected)||work.files[0];
   const drawing=work.drawing;
-  const retry=file?.type==='skp'&&file.conversion?.status!=='ready'&&owner?`<button class="btn secondary" data-action="room-final-convert" data-id="${esc(file.id)}">转换 / 重试模型</button><output id="final-conversion-status" aria-live="polite"></output>`:'';
-  const evidence=drawing ? (selected==='axon'?axonSvg(drawing.plan,drawing.program):planSvg(drawing.plan,drawing.program)) : file?.type==='pdf'?pdfSheet(room,file,pdfPage):file?material(room,file):'';
+  const retry=file?.type==='skp'&&file.conversion?.status!=='ready'?`<p class="muted">${esc(MODEL_STATUS[file.conversion?.status]||'等待转换')}</p>
+    ${owner?`<button class="btn secondary" data-action="room-final-convert" data-id="${esc(file.id)}">转换 / 重试模型</button><output id="final-conversion-status" aria-live="polite"></output>`:''}`:'';
+  const base=revisionBase(room),version=room.version;
+  const evidence=drawing ? (selected==='axon'?axonSvg(drawing.plan,drawing.program):planSvg(drawing.plan,drawing.program)) : file?.type==='pdf'?pdfSheet(room,file,pdfPage,base):file?material(room,file):'';
   const tabs=drawing?[['plan','平面'],['axon','体块']]:work.files.map(f=>[f.id,f.name]);
   const active=drawing?(selected==='axon'?'axon':'plan'):file?.id;
   const comments=room.comments.map(c=>`<article class="evaluation"><small>${esc(c.authorName||c.author)} · ${esc(c.status)}</small>
     <button class="location" data-action="room-locate" data-id="${esc(c.id)}">${esc(work.files.find(f=>f.id===c.source)?.name||'整件作品')}${c.imagePoint?.page?' · 第 '+c.imagePoint.page+' 页':''} ↗</button><p>${esc(c.text)}</p>${c.task?`<p>${esc(c.task)}</p>`:''}
-    ${c.replies.map(r=>`<blockquote>${esc(r.text)}${(r.files||[]).map(f=>`<a href="/api/review-rooms/${room.id}/files/${f.id}" target="_blank" rel="noopener">补交 · ${esc(f.name)} ↗</a>`).join('')}</blockquote>`).join('')}
-    ${owner?`<button class="btn text" data-action="room-reply" data-id="${c.id}">回应与补交</button>`:reviewer?`<button class="btn text" data-action="room-resolve" data-id="${c.id}" data-status="已完成">复核完成</button>`:''}</article>`).join('');
-  const verdicts=(room.verdicts||[]).map(v=>`<article class="evaluation"><small>${esc(v.author)} · ${esc(v.decision)}</small><p>${esc(v.text)}</p></article>`).join('');
+    ${c.replies.map(r=>`<blockquote>${esc(r.text)}${(r.files||[]).map(f=>`<a href="${base}/files/${f.id}" target="_blank" rel="noopener">补交 · ${esc(f.name)} ↗</a>`).join('')}</blockquote>`).join('')}
+    ${owner?`<button class="btn text" data-action="room-reply" data-id="${c.id}">回应与补交</button>`:c.canResolve&&c.status!=='已完成'?`<button class="btn text" data-action="room-resolve" data-id="${c.id}" data-status="已完成">复核完成</button>`:''}</article>`).join('');
+  const verdicts=(room.verdicts||[]).map(v=>`<article class="evaluation"><small>${esc(v.author)} · ${esc(v.decision)} · ${date(v.createdAt)}</small><p>${esc(v.text)}</p></article>`).join('');
   const result=room.aiReview;
-  const ai=result?`<small>${esc(result.provider)} · ${esc(result.model)}</small>${result.comments.map(c=>`<article class="evaluation"><h3>${esc(c.title)}</h3><p>${esc(c.evidence)}</p><p>${esc(c.suggestion)}</p>${c.fileId?`<button class="btn text" data-action="room-material" data-id="${esc(c.fileId)}">${esc(c.location)} ↗</button>`:`<small>${esc(c.location)}</small>`}</article>`).join('')}`:`<p class="work-empty">尚无 AI 点评。支持图像的模型可参考展板图像或 PDF 首页；PDF 文字最多提取前十页。</p>${owner?`<button class="btn secondary" data-action="room-final-ai" ${aiBusy?'disabled':''}>${aiBusy?'正在生成…':'生成 AI 点评'}</button>`:''}`;
+  const list=(label,rows)=>rows?.length?`<h3>${label}</h3><ul>${rows.map(text=>`<li>${esc(text)}</li>`).join('')}</ul>`:'';
+  const ai=result?`<small>${esc(result.provider)} · ${esc(result.model)}</small><p>${esc(result.summary)}</p>
+    ${result.coverage?.length?`<details><summary>本次材料读取范围</summary><ul>${result.coverage.map(row=>`<li>${esc(row.name)} · ${esc(coverageText(row))}</li>`).join('')}</ul></details>`:''}
+    ${list('已有依据的优点',result.strengths)}${list('还需补充的材料',result.missingMaterials)}
+    ${result.comments.map((c,i)=>`<article class="evaluation"><small>${esc(c.kind)}</small><h3>${esc(c.title)}</h3>
+      ${c.fileId?`<button class="btn text" data-action="room-final-ai-source" data-index="${i}">${esc(c.location)} ↗</button>`:`<small>${esc(c.location)}</small>`}
+      ${c.quote?`<blockquote>${esc(c.quote)}</blockquote>`:''}<p><b>依据</b> ${esc(c.evidence)}</p>
+      ${c.need?`<p><b>待补充</b> ${esc(c.need)}</p>`:''}<p><b>建议</b> ${esc(c.suggestion)}</p>
+      ${c.question?`<p><b>追问</b> ${esc(c.question)}</p>`:''}</article>`).join('')}${list('可供教师选择的追问',result.teacherQuestions)}`:
+    `<p class="work-empty">此版暂无 AI 点评。PDF 文字最多提取前 10 页，图像和模型视图取决于服务能力。</p>${owner?`<button class="btn secondary" data-action="room-final-ai" ${aiBusy?'disabled':''}>${aiBusy?'正在生成…':'生成 AI 点评'}</button>`:''}`;
+  const canCompare=version.parentVersionId&&file?.type==='skp'&&file.conversion?.status==='ready';
+  const compare=canCompare&&comparison?`<div class="final-model-comparison"><div><p>V${comparison.number} · 旧版参考</p><div id="final-reference-model" class="model-area room-model"><p class="model-loading">正在加载旧版模型…</p></div></div><div><p>V${version.number} · 当前评阅</p>${evidence}</div></div>`:evidence;
+  const history=`<ol class="final-history">${room.versions.map(v=>`<li><button class="btn text" data-action="room-final-version" data-id="${esc(v.id)}">V${v.number} · ${esc(v.label)}</button><small>${date(v.createdAt)}</small></li>`).join('')}</ol>`;
+  const reviewHistory=room.verdictHistory?.length?`<details><summary>本版教师评阅记录</summary>${room.verdictHistory.map(v=>
+    `<article class="evaluation"><small>${esc(v.author)} · ${esc(v.decision)} · ${date(v.createdAt)}</small><p>${esc(v.text)}</p></article>`).join('')}</details>`:'';
   return `<section class="final-desk"><a class="back-link" href="#/finals">← 最终评审</a><div class="work-heading"><h1>${esc(room.title)}</h1>${owner?'<button class="btn secondary" data-action="room-final-invite">邀请老师</button>':''}</div>
+    <div class="final-version-strip row"><label>作品版本 <select id="room-final-version" ${loading?'disabled':''}>${room.versions.map(v=>`<option value="${esc(v.id)}" ${v.id===version.id?'selected':''}>V${v.number} · ${esc(v.label)}</option>`).join('')}</select></label>
+    ${owner&&version.id===room.latestVersionId?'<button class="btn primary" data-action="room-final-revise">提交修订版</button>':''}
+    <button class="btn secondary" data-action="room-export">导出此版</button>${loading?'<span role="status">正在读取版本…</span>':''}</div>
     ${work.description?`<p class="final-focus">${esc(work.description)}</p>`:''}
-    <div class="desk-columns"><section class="desk-sheet"><nav class="sheet-tabs" aria-label="作品材料">${tabs.map(([id,name])=>`<button aria-pressed="${id===active}" data-action="room-material" data-id="${esc(id)}">${esc(name)}</button>`).join('')}</nav>${evidence}${retry}</section>
-    <aside class="desk-feedback"><nav class="work-tabs" aria-label="点评来源">${[['teacher','教师审查'],['ai','AI 点评']].map(([id,name])=>`<button aria-pressed="${tab===id}" data-action="room-final-tab" data-id="${id}">${name}</button>`).join('')}</nav>
-    ${tab==='ai'?ai:`${reviewer?'<button class="btn primary" data-action="room-final-verdict">发布总评</button> <button class="btn text" data-action="room-comment" data-id="project">添加意见</button>':''}${verdicts||'<p class="work-empty">老师发布总评后会显示在这里。</p>'}${comments}`}
+    <div class="desk-columns"><section class="desk-sheet"><nav class="sheet-tabs" aria-label="作品材料">${tabs.map(([id,name])=>`<button aria-pressed="${id===active}" data-action="room-material" data-id="${esc(id)}">${esc(name)}</button>`).join('')}</nav>
+    ${canCompare?`<button class="btn text" data-action="room-final-compare" data-id="${esc(file.id)}">${comparison?'关闭上一版对照':'对照上一版模型'}</button>`:''}${compare}${retry}</section>
+    <aside class="desk-feedback"><nav class="work-tabs" aria-label="评阅内容">${[['teacher','教师审查'],['ai','AI 点评'],['history','提交记录']].map(([id,name])=>`<button aria-pressed="${tab===id}" data-action="room-final-tab" data-id="${id}">${name}</button>`).join('')}</nav>
+    ${tab==='history'?history+`<h3>V${version.number} 修订说明</h3><p>${esc(version.note||'首次提交')}</p>`+reviewHistory:tab==='ai'?ai:
+      `${reviewer?'<button class="btn primary" data-action="room-final-verdict">发布本版总评</button> <button class="btn text" data-action="room-comment" data-id="project">添加意见</button>':''}${verdicts||`<p class="work-empty">${version.number===1?'待评阅':'待复核'}</p>`}${comments}`}
     <button class="btn text" data-action="room-refresh">刷新评阅记录</button></aside></div></section>`;
 }

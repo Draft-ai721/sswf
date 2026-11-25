@@ -1,4 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {api} from '../worker/api.js';import {createSeed} from '../src/data.js';
+import {applyStudioActions,prepareStudio} from '../shared/studio-actions.js';
 class Bucket{constructor(){this.data=new Map();this.n=0}async get(k){const o=this.data.get(k);return o?{...o,json:async()=>JSON.parse(o.value),body:new Blob([o.value]).stream()}:null}async head(k){return this.data.get(k)||null}async put(k,value,opts={}){const old=this.data.get(k);if(opts.onlyIf?.etagMatches&&opts.onlyIf.etagMatches!==old?.etag)return null;if(opts.onlyIf?.etagDoesNotMatch==='*'&&old)return null;const o={value,etag:'e'+(++this.n),...opts};this.data.set(k,o);return {etag:o.etag}}}
 const b=new Bucket(),env={BUCKET:b};
 const call=(user,path,method='GET',body,tag,email=user+'@example.test')=>api(new Request('https://studio.test'+path,{method,headers:{'oai-authenticated-user-id':user,'oai-authenticated-user-email':email,...(tag?{'If-Match':tag}:{'If-None-Match':'*'})},body:body===undefined?undefined:body instanceof Uint8Array?body:JSON.stringify(body)}),env);
@@ -12,3 +13,85 @@ test('Read-only users can view but cannot comment, respond or verify',async()=>{
 test('Revocation removes already accepted teacher access including file downloads and list',async()=>{const r=await good('student','/api/review-rooms/'+roomId+'/revoke','POST',{inviteId:teacherInvite},etag);etag=r.etag;assert.equal((await call('teacher','/api/review-rooms/'+roomId)).status,403);assert.equal((await call('teacher','/api/review-rooms/'+roomId+'/files/'+fileId)).status,403);assert.equal((await good('teacher','/api/review-rooms')).rooms.length,0);assert.equal((await call('teacher','/api/review-rooms/accept','POST',{token:teacherToken})).status,403)});
 test('Expiration is enforced even for previously accepted users',async()=>{const k='review-rooms/'+roomId+'.json',record=JSON.parse(b.data.get(k).value);record.invites.find(i=>i.id===viewerInvite).expiresAt='2020-01-01T00:00:00Z';await b.put(k,JSON.stringify(record));assert.equal((await call('visitor','/api/review-rooms/'+roomId)).status,403);assert.equal((await call('visitor','/api/review-rooms/accept','POST',{token:viewerToken})).status,403)});
 test('PDF page lineage validates parent project and real stored type',async()=>{const jpg=Uint8Array.of(255,216,255,217);const file=(await good('student','/api/files?name=page.jpg&project=demo-reading&parentId='+fileId+'&page=1','POST',jpg)).file;assert.deepEqual(file.derivedFrom,{fileId,page:1});assert.equal((await call('student','/api/files?name=page.jpg&project=demo-reading&parentId='+otherFileId+'&page=0','POST',jpg)).status,400);assert.equal((await call('teacher','/api/files?name=page.jpg&project=demo-reading&parentId='+fileId+'&page=1','POST',jpg)).status,404)});
+
+test('Concept room keeps the located original private or shared per revision and assigns each review task',async()=>{
+  const student='revision-student',teacher='revision-teacher',peer='revision-peer';
+  const draft=createSeed(),projectId=draft.projects[0].id;
+  const project=applyStudioActions(prepareStudio(draft.projects[0]),[{type:'add_space',name:'入口区',area:20}]).project;
+  draft.projects[0]=project;
+  const firstTag=(await good(student,'/api/state','PUT',draft)).etag;
+  const first=await good(student,'/api/snapshots','POST',{projectId,kind:'stage',label:'原稿',note:'初次讨论'},firstTag);
+  const opened=await good(student,'/api/review-rooms','POST',{projectId,versionId:first.versionId,title:'入口讨论'});
+  const path='/api/review-rooms/'+opened.room.id;
+  let roomTag=opened.etag;
+  const inviteIds=[];
+  for(const [account,perspective] of [[teacher,'教师'],[peer,'同伴']]){
+    const invite=await good(student,path+'/invites','POST',{role:'reviewer',perspective,email:account+'@example.test',days:1},roomTag);
+    inviteIds.push(invite.room.invites.at(-1).id);
+    await good(account,'/api/review-rooms/accept','POST',{token:invite.inviteUrl.split('/invite/')[1]});
+    roomTag=(await good(student,path)).etag;
+  }
+  const option=opened.room.version.snapshot.workflow.options.at(-1),space=option.plan.spaces[0];
+  const anchor={kind:'mass',versionId:first.versionId,optionId:option.id,spaceId:space.id,
+    xyz:[2,2,space.height],view:{viewBox:[0,0,800,480],camera:{yaw:1,pitch:.5}}};
+  const question={source:'option-'+option.id,text:'补充进入空间的尺度依据',versionId:first.versionId,anchor,requestId:'original-question'};
+  assert.equal((await call(teacher,path+'/comments','POST',{...question,anchor:{...anchor,spaceId:'unknown-space'}},roomTag)).status,400);
+  const asked=await good(teacher,path+'/comments','POST',question,roomTag);
+  assert.deepEqual(asked.room.comments[0].anchor,anchor);
+  assert.equal(asked.room.comments[0].authorId,undefined);
+  assert.equal((await good(teacher,path+'/comments','POST',question,roomTag)).room.comments.length,1);
+  assert.equal((await call(teacher,path+'/comments','POST',{...question,text:'changed replay'},asked.etag)).status,409);
+  assert.equal((await call(peer,path+'/comments','POST',{...question,requestId:'peer-question'},roomTag)).status,409);
+  roomTag=asked.etag;
+  const owner=await good(student,path);
+  assert.deepEqual(owner.room.taskSummary,{counts:{待回应:1},unread:1});
+  assert.equal((await call(peer,path+'/read-tasks','POST',{eventIds:owner.room.tasks.map(task=>task.id)})).status,409);
+  const read={eventIds:owner.room.tasks.map(task=>task.id)};
+  for(let attempt=0;attempt<2;attempt++)assert.equal((await good(student,path+'/read-tasks','POST',read)).taskSummary.unread,0);
+  assert.equal((await good(student,'/api/review-rooms')).rooms[0].tasks.unread,0);
+
+  const pdf=new TextEncoder().encode('%PDF-1.4 revised entrance plan');
+  const file=(await good(student,'/api/files?name=entrance.pdf&project='+projectId,'POST',pdf)).file;
+  const updated=structuredClone(first.state), revised=updated.projects[0];
+  revised.report='改后的设计说明';revised.files.push(file);
+  revised.workflow.options.find(row=>row.id===option.id).plan.spaces=[];
+  const parentTag=(await good(student,'/api/state','PUT',updated,first.etag)).etag;
+  const page=(await good(student,'/api/files?name=entrance.jpg&project='+projectId+'&parentId='+file.id+'&page=1','POST',Uint8Array.of(255,216,255,217))).file;
+  revised.files.push(page);
+  const updatedTag=(await good(student,'/api/state','PUT',updated,parentTag)).etag;
+  const second=await good(student,'/api/snapshots','POST',{projectId,kind:'stage',label:'改稿',note:'补充入口依据'},updatedTag);
+  const versionPath=path+'/versions/'+second.versionId,reply={commentId:asked.room.comments[0].id,text:'移开原入口并补充理由',decision:'partial',responseVersionId:second.versionId,responseAnchor:{...anchor,spaceId:undefined,versionId:second.versionId},requestId:'reply-new-version'};
+  assert.equal((await call(teacher,versionPath)).status,404);
+  assert.equal((await call(teacher,versionPath+'/files/'+file.id)).status,404);
+  assert.equal((await call(student,path+'/reply','POST',reply,roomTag)).status,404);
+  assert.equal((await call(peer,path+'/versions','POST',{projectVersionId:second.versionId},roomTag)).status,403);
+  const shared=await good(student,path+'/versions','POST',{projectVersionId:second.versionId,requestId:'share-new-version'},roomTag);
+  assert.deepEqual(shared.room.versions.map(row=>row.id),[first.versionId,second.versionId]);
+  assert.equal((await good(teacher,versionPath)).version.snapshot.report,'改后的设计说明');
+  assert.notEqual((await good(teacher,path)).room.version.snapshot.report,'改后的设计说明');
+  assert.equal((await good(teacher,path+'/versions/'+first.versionId)).version.snapshot.workflow.options.find(row=>row.id===option.id).plan.spaces[0].id,space.id);
+  assert.equal((await good(teacher,versionPath)).version.snapshot.workflow.options.find(row=>row.id===option.id).plan.spaces.length,0);
+  assert.equal(await(await call(teacher,versionPath+'/files/'+file.id)).text(),'%PDF-1.4 revised entrance plan');
+  assert.equal((await call(teacher,versionPath+'/files/'+page.id)).status,200);
+  assert.equal((await call(teacher,path+'/files/'+file.id)).status,404);
+  assert.equal((await call(student,path+'/reply','POST',{...reply,responseAnchor:{...reply.responseAnchor,spaceId:space.id}},shared.etag)).status,400);
+  const response=await good(student,path+'/reply','POST',reply,shared.etag);
+  const sent=response.room.comments[0];
+  assert.equal(sent.status,'待复核');
+  assert.equal(sent.replies[0].responseVersionId,second.versionId);
+  assert.equal(sent.replies[0].responseAnchor.view.camera.pitch,.5);
+  assert.deepEqual((await good(teacher,path)).room.taskSummary,{counts:{待复核:1},unread:1});
+  assert.deepEqual((await good(peer,path)).room.taskSummary,{counts:{待点评:1},unread:1});
+  const finish={commentId:sent.id,status:'已完成',requestId:'teacher-resolve'};
+  assert.equal((await call(peer,path+'/resolve','POST',finish,response.etag)).status,403);
+  const returned=await good(teacher,path+'/resolve','POST',{...finish,status:'继续修改',requestId:'teacher-request-rework'},response.etag);
+  assert.deepEqual((await good(student,path)).room.taskSummary,{counts:{继续修改:1},unread:1});
+  assert.equal((await call(teacher,path+'/resolve','POST',finish,returned.etag)).status,409);
+  const rerun=await good(student,path+'/reply','POST',{...reply,text:'已根据复核补充图纸',requestId:'reply-after-rework'},returned.etag);
+  assert.equal((await call(teacher,path+'/resolve','POST',finish,response.etag)).status,409);
+  const finished=await good(teacher,path+'/resolve','POST',finish,rerun.etag);
+  assert.equal(finished.room.comments[0].status,'已完成');
+  assert.deepEqual(finished.room.taskSummary,{counts:{},unread:0});
+  await good(student,path+'/revoke','POST',{inviteId:inviteIds[0]},finished.etag);
+  assert.equal((await call(teacher,versionPath+'/files/'+file.id)).status,403);
+});
