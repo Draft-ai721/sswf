@@ -15,12 +15,12 @@ export function finalArchiveHtml(room,figures=[],capturedAt=new Date().toISOStri
   const rendered=figures.map(({caption,data})=>image(data)?`<figure><img src="${data}" alt="${esc(caption)}"><figcaption>${esc(caption)}</figcaption></figure>`:
     `<p class="meta">${esc(caption)}</p>`).join('');
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>${esc(room.title)} · 终评 V${v.number}</title><style>
+  <title>${esc(room.title)} · 评阅 V${v.number}</title><style>
   body{color:#29372a;background:#eef1e9;font:15px/1.7 system-ui,sans-serif;margin:0}.archive{max-width:900px;margin:32px auto;padding:44px;background:white}
   h1,h2,h3{line-height:1.3}h2{border-bottom:1px solid #dfe5d8;padding-bottom:8px;margin-top:30px}.meta,figcaption,small{color:#576951}
   article,figure{break-inside:avoid;margin:14px 0;padding:14px;border:1px solid #dfe5d8}img,svg{max-width:100%;max-height:680px;display:block;margin:auto}
   blockquote{border-left:3px solid #bcccae;padding-left:12px;margin:12px 0}@page{size:A4;margin:16mm}@media print{body{background:white}.archive{margin:0;padding:0}h2{break-after:avoid}}
-  </style></head><body><main class="archive"><p class="meta">最终评审 · 作品档案</p><h1>${esc(room.title)} · V${v.number}</h1>
+  </style></head><body><main class="archive"><p class="meta">作品评阅 · 作品档案</p><h1>${esc(room.title)} · V${v.number}</h1>
   <p class="meta">${esc(v.label)} · 提交于 ${date(v.createdAt)}<br>版本编号 ${esc(v.id)} · 导出于 ${date(capturedAt)}</p>
   ${v.note?`<h2>修订说明</h2><p>${text(v.note)}</p>`:''}${work.description?`<h2>设计说明</h2><p>${text(work.description)}</p>`:''}
   <h2>本版材料</h2>${notes('原件清单',work.files.map(file=>file.name))}
@@ -90,6 +90,6 @@ export async function downloadFinalReport(room,currentModel){
     }
   }
   const url=URL.createObjectURL(new Blob([finalArchiveHtml(room,figures)],{type:'text/html;charset=utf-8'}));
-  const link=document.createElement('a');link.href=url;link.download=room.title+'-V'+room.version.number+'-终评档案.html';
+  const link=document.createElement('a');link.href=url;link.download=room.title+'-V'+room.version.number+'-评阅档案.html';
   document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
 }

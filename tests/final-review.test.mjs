@@ -291,3 +291,78 @@ test('Visual final AI evidence uses the frozen SKP conversion and restores only 
     assert.equal((await api(syntheticLarge,env)).status,413);
   }finally{globalThis.fetch=originalFetch}
 });
+
+test('Mentor contacts bind new invitations to a confirmed account, and archived works retain their submitted version',async()=>{
+  const bucket=new Bucket(),env={BUCKET:bucket};
+  async function call(user,path,method='GET',data,etag,confirmed=true){
+    return api(new Request('https://studio.test'+path,{method,headers:{
+      'oai-authenticated-user-id':user,'oai-authenticated-user-name':encodeURIComponent(user==='teacher'?'课堂导师':user),
+      ...(confirmed?{'oai-authenticated-user-email':user+'@example.test'}:{}),...(etag?{'If-Match':etag}:{})
+    },body:data===undefined?undefined:data instanceof Uint8Array?data:JSON.stringify(data)}),env);
+  }
+  async function good(...args){
+    const response=await call(...args),result=await response.json();
+    assert.ok(response.ok,JSON.stringify(result));return result;
+  }
+  assert.equal((await call('teacher','/api/mentors/code','POST',{},null,false)).status,403);
+  const old=(await good('teacher','/api/mentors/code','POST',{})).code;
+  const {code,expiresAt}=await good('teacher','/api/mentors/code','POST',{});
+  assert.ok(Date.parse(expiresAt)>Date.now());
+  assert.equal((await call('student','/api/mentors/connect','POST',{code:old})).status,404);
+  assert.equal((await call('teacher','/api/mentors/connect','POST',{code})).status,400);
+  const {mentors}=await good('student','/api/mentors/connect','POST',{code});
+  assert.deepEqual(mentors,[{id:mentors[0].id,name:'课堂导师'}]);
+  assert.deepEqual((await good('student','/api/mentors/connect','POST',{code})).mentors,mentors);
+  assert.deepEqual((await good('outsider','/api/mentors')).mentors,[]);
+  const {file}=await good('student','/api/final-files?name=board.pdf','POST',new TextEncoder().encode('%PDF-1.4 board'));
+  const created=await good('student','/api/review-rooms','POST',{kind:'final',title:'工作室展板',files:[{id:file.id}]});
+  const path='/api/review-rooms/'+created.room.id,accept='/api/review-rooms/accept';
+  assert.equal((await call('teacher',path)).status,403);
+  const invite=await good('student',path+'/invites','POST',{role:'reviewer',perspective:'教师',mentorId:mentors[0].id,days:7},created.etag);
+  assert.equal(invite.room.invites[0].mentorName,'课堂导师');
+  assert.equal(invite.room.invites[0].targetUser,undefined);
+  const payload={token:invite.inviteUrl.split('/invite/')[1]};
+  assert.equal((await call('outsider',accept,'POST',payload)).status,403);
+  assert.equal((await call('teacher',accept,'POST',payload,null,false)).status,403);
+  await good('teacher',accept,'POST',payload);
+  const before=await good('teacher',path+'?version=latest');
+  assert.equal((await call('teacher',path+'/trash','POST',{trashed:true},before.etag)).status,403);
+  assert.equal((await call('student',path+'/trash','POST',{trashed:true},created.etag)).status,409);
+  const archived=await good('student',path+'/trash','POST',{trashed:true},before.etag);
+  assert.ok(archived.trashedAt);
+  assert.equal((await good('student','/api/review-rooms')).rooms[0].trashedAt,archived.trashedAt);
+  assert.equal((await good('teacher','/api/review-rooms')).rooms.length,0);
+  assert.equal((await call('teacher',path+'/files/'+file.id)).status,403);
+  assert.equal((await call('teacher',accept,'POST',payload)).status,403);
+  const restored=await good('student',path+'/trash','POST',{trashed:false},archived.etag);
+  assert.equal(restored.trashedAt,null);
+  assert.deepEqual((await good('teacher',path+'?version=latest')).room.version,before.room.version);
+  assert.deepEqual((await good('student','/api/mentors/'+mentors[0].id,'DELETE')).mentors,[]);
+  assert.equal((await call('student',path+'/invites','POST',{role:'reviewer',perspective:'教师',mentorId:mentors[0].id,days:7},restored.etag)).status,400);
+});
+
+test('Draft trash is private and server controlled, and restore retains snapshots',async()=>{
+  const env={BUCKET:new Bucket()};
+  const draft={id:'private-draft',name:'我的草稿',stage:0,report:'初版',files:[],feedback:[],questions:[],annotations:[],versions:[]};
+  const seed={schema:1,course:{name:'设计课'},projects:[draft]};
+  const call=(user,path,method='GET',data,etag)=>api(new Request('https://studio.test'+path,{method,headers:{
+    'oai-authenticated-user-id':user,...(etag?{'If-Match':etag}:{'If-None-Match':'*'})
+  },body:data===undefined?undefined:JSON.stringify(data)}),env);
+  async function good(...args){
+    const response=await call(...args),value=await response.json();
+    assert.ok(response.ok,JSON.stringify(value));return value;
+  }
+  const url='/api/projects/'+draft.id+'/trash';
+  const seeded=await good('student','/api/state','PUT',seed);
+  const snapshot={projectId:draft.id,kind:'stage',label:'草稿 V1',note:'从项目目录保存'};
+  const saved=await good('student','/api/snapshots','POST',snapshot,seeded.etag);
+  assert.equal((await call('student',url,'POST',{trashed:true},seeded.etag)).status,409);
+  assert.equal((await call('other',url,'POST',{trashed:true})).status,404);
+  const archived=await good('student',url,'POST',{trashed:true},saved.etag);
+  assert.ok(archived.state.projects[0].trashedAt);
+  assert.equal((await call('student','/api/snapshots','POST',snapshot,archived.etag)).status,404);
+  const obsolete=await good('student','/api/state','PUT',{...seed,projects:[]},archived.etag);
+  const restored=await good('student',url,'POST',{trashed:false},obsolete.etag);
+  assert.equal(restored.state.projects[0].trashedAt,undefined);
+  assert.equal(restored.state.projects[0].versions[0].id,saved.versionId);
+});

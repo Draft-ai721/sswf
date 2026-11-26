@@ -46,10 +46,10 @@ async function submittedFiles(bucket,prefix,items,parent=[]){
 export async function createFinalSubmission(bucket,prefix,data,state){
   const title=typeof data.title==='string'&&data.title.trim(),focus=data.focus??'';
   if(!title||title.length>100||typeof focus!=='string'||focus.length>3000)throw new RoomError('请填写作品名称，关注问题最多 3000 字。');
-  const course={name:'最终评审',brief:'',focus:''};
+  const course={name:'作品评阅',brief:'',focus:''};
   let files=[],drawing;
   if(data.versionId){
-    const version=state?.projects.find(p=>p.id===data.projectId)?.versions.find(v=>v.id===data.versionId);
+    const version=state?.projects.find(p=>p.id===data.projectId&&!p.trashedAt)?.versions.find(v=>v.id===data.versionId);
     const option=version?.snapshot.workflow?.options.find(o=>o.id===data.optionId);
     if(!option?.plan)throw new RoomError('请选择已保存版本中的一个平面方案。');
     const {underlay,...geometry}=option.plan;

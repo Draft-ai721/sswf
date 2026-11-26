@@ -82,7 +82,7 @@ test('SQLite online backup and isolated restore preserve projects, both review v
     assert.equal(JSON.stringify(diff).includes(prefix),false);
 
     assert.deepEqual(await restoreBackup(backup,restored,operationsEnv),saved);
-    copy=await createStudioServer({dataDir:restored,origin,env:{...operationsEnv,STUDIO_READ_ONLY:'1'}});
+    copy=await createStudioServer({dataDir:restored,origin,env:{...operationsEnv,RAILWAY_GIT_COMMIT_SHA:revision,STUDIO_RELEASE_REVISION:'a'.repeat(40),STUDIO_READ_ONLY:'1'}});
     const recovered=client(copy);
     assert.equal((await recovered.good('/api/auth/me','GET',undefined,headers)).value.user.id,user.id);
     assert.equal((await recovered.good('/api/ai/status','GET',undefined,headers)).value.configured,true);

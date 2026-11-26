@@ -102,3 +102,8 @@
 @media(max-width:520px){.studio-preview{margin:0 8px 6px}.studio-compare-controls label{max-width:45%}
   .studio-comparison-panes{gap:6px}.studio-comparison-panes figure{padding:5px}
   #studio-compare-choice{grid-template-columns:1fr}}
+
+.studio-first-requirement{align-self:flex-start;margin:5px 16px;padding:5px 3px;color:#375c4a;font-size:12px}
+.studio-canvas-history{margin:8px 0;border:1px solid #dce4d4;border-radius:6px;color:#526746;font-size:12px}
+.studio-canvas-history summary{padding:7px 9px;cursor:pointer}.studio-canvas-history summary span{margin-left:5px;color:#65755e}
+.studio-canvas-history[open]{padding-bottom:4px}.studio-canvas-history .studio-message{margin:3px 9px}

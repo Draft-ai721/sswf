@@ -122,7 +122,7 @@ if(match[2]==='preview'&&request.method==='POST'){
  if(!project)throw new AiError('项目不存在。',404,'project_missing');
  return await assistantPreview(bucket,prefix,request,old,project,run,await readJson(request,4000));
 }
-if(match[2]==='apply'&&request.method==='POST'){if(run.finalRoomId)throw new AiError('终评记录已保存在作品中。',400,'final_review');if(run.kind==='followup')throw new AiError('追问回答独立保存在对话记录中，请自行判断和改写。',400,'followup_reference');if(run.status!=='succeeded')throw new AiError('本次生成尚未成功，不能写入工作台。',409,'not_ready');const old=await read(bucket,stateKey),p=old?.value.projects.find(p=>p.id===run.projectId);if(!p)throw new AiError('项目不存在。',404,'project_missing');
+if(match[2]==='apply'&&request.method==='POST'){if(run.finalRoomId)throw new AiError('作品评阅记录已保存在作品中。',400,'final_review');if(run.kind==='followup')throw new AiError('追问回答独立保存在对话记录中，请自行判断和改写。',400,'followup_reference');if(run.status!=='succeeded')throw new AiError('本次生成尚未成功，不能写入工作台。',409,'not_ready');const old=await read(bucket,stateKey),p=old?.value.projects.find(p=>p.id===run.projectId);if(!p)throw new AiError('项目不存在。',404,'project_missing');
 let proposalId='';
 if(run.kind==='assistant'){
  const data=request.body?await readJson(request,4000):{};
@@ -157,11 +157,11 @@ c=await resolvedAiConfig(env,bucket,prefix);if(!c.configured)throw new AiError('
 const data=await readJson(request,3*1024*1024);if(!id(data.projectId)||!id(data.requestId)||!['draft','review','followup','design','layout','assistant'].includes(data.kind))throw new AiError('生成请求格式不正确。',400,'bad_request');if(['design','layout'].includes(data.kind)&&(!Number.isInteger(data.designStage)||data.designStage<1||data.designStage>6||typeof data.designObjective!=='string'||!data.designObjective.trim()||data.designObjective.length>2000||!DESIGN_PERSPECTIVES.includes(data.perspective)))throw new AiError('请明确设计阶段、生成目标与讨论视角。',400,'bad_design_request');if(data.kind==='layout'&&(!data.layoutCanvas||!['width','depth'].every(k=>typeof data.layoutCanvas[k]==='number'&&Number.isFinite(data.layoutCanvas[k])&&data.layoutCanvas[k]>=1&&data.layoutCanvas[k]<=1000)||data.designStage!==4))throw new AiError('请设置1至1000米的布局画布。',400,'bad_layout_request');if(data.kind==='layout')data.layoutCanvas={width:data.layoutCanvas.width,depth:data.layoutCanvas.depth};if(data.kind==='assistant'){if(typeof data.assistantInput!=='string'||!data.assistantInput.trim()||data.assistantInput.length>2000||!data.assistantSelection||!id(data.assistantSelection.optionId)||!Array.isArray(data.assistantSelection.spaceIds)||data.assistantSelection.spaceIds.length>10||data.assistantSelection.spaceIds.some(s=>!id(s))||!Array.isArray(data.assistantMessages||[])||(data.assistantMessages||[]).length>6||(data.assistantMessages||[]).some(m=>!['user','assistant'].includes(m.role)||typeof m.text!=='string'||m.text.length>2000))throw new AiError('对话或当前选择无效，请重新选择方案。',400,'assistant_request_invalid')}
 let finalRoom=null,finalSnapshot=null;
 if(data.finalRoomId){
- if(data.kind!=='review'||!id(data.finalRoomId)||data.projectId!=='final-'+data.finalRoomId)throw new AiError('终评请求无效。',400,'bad_final');
+ if(data.kind!=='review'||!id(data.finalRoomId)||data.projectId!=='final-'+data.finalRoomId)throw new AiError('作品评阅请求无效。',400,'bad_final');
  finalRoom=await read(bucket,'review-rooms/'+data.finalRoomId+'.json');
  const room=finalRoom?.value;
- if(room?.kind!=='final'||room.ownerPrefix!==prefix)throw new AiError('作品不存在或无权请求点评。',403,'foreign_final');
- if(data.submissionVersionId!==undefined&&!id(data.submissionVersionId))throw new AiError('终评版本无效。',400,'bad_final_version');
+ if(room?.kind!=='final'||room.ownerPrefix!==prefix||room.trashedAt)throw new AiError('作品不存在或无权请求点评。',403,'foreign_final');
+ if(data.submissionVersionId!==undefined&&!id(data.submissionVersionId))throw new AiError('作品评阅版本无效。',400,'bad_final_version');
  data.submissionVersionId??=room.version.id;
  try{finalSnapshot=await finalVersion(bucket,room,data.submissionVersionId)}
  catch(error){throw new AiError(error.message,error.status||500,'final_version_missing')}

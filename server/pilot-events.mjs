@@ -6,8 +6,8 @@ const aiCodes=new Set(['provider_network','provider_redirect','provider_auth','p
 const uploads=new Set(['/api/files','/api/final-files']);
 
 export function releaseRevision(config){
-  const value=config.STUDIO_RELEASE_REVISION||config.RAILWAY_GIT_COMMIT_SHA;
-  return typeof value==='string'&&/^[a-f0-9]{7,64}$/.test(value)?value:null;
+  return [config.RAILWAY_GIT_COMMIT_SHA,config.STUDIO_RELEASE_REVISION]
+    .find(value=>typeof value==='string'&&/^[a-f0-9]{7,64}$/.test(value))||null;
 }
 
 export function pilotRecorder({enabled,key,revision,cookieName,sink=line=>console.info(line)}){

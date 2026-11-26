@@ -27,3 +27,7 @@
 .room-concept-canvas svg{width:100%;height:clamp(220px,50vh,540px);display:block}
 .room-concept-canvas{margin:12px 0;background:#f7faf4;border-radius:8px;border:1px solid #dce4d4}
 .room-concept-toolbar button[aria-pressed=true]{border-color:#42705a;background:#dfebde}
+
+#mentor-settings{margin:20px 0;padding:14px 0;border-top:1px solid var(--line)}
+#mentor-settings p{line-height:1.65;margin:8px 0}#mentor-settings details{margin-top:12px}#mentor-settings summary{cursor:pointer}
+.mentor-list-row{display:flex;gap:12px;justify-content:space-between;align-items:center;padding:7px 0}

@@ -1,6 +1,7 @@
 import {createConversions,MODEL_STATUS} from './conversion-client.js';
 import {pdfSheet} from './final-pdf.js';
 import {esc} from './materials.js';
+import {workActions} from './work-actions.js';
 import {extractReviewPdf,reviewCover} from './studio-pdf.js';
 import {revisionBase} from './concept-room.js';
 import {planSvg,axonSvg} from '../shared/space-planning.js';
@@ -21,9 +22,10 @@ export function submissionPage(projects, guest) {
   for(const project of projects) for(const version of project.versions) for(const option of version.snapshot.workflow?.options||[]) {
     if(option.plan)options.push(`<option value="${esc(JSON.stringify([project.id,version.id,option.id]))}">${esc(project.name)} · V${version.number} · ${esc(option.title)}</option>`);
   }
-  return `<section class="work-page submit-page"><a class="back-link" href="#/finals">← 最终评审</a><h1>提交作品</h1>
+  return `<section class="work-page submit-page"><a class="back-link" href="#/finals">← 作品评阅</a><h1>提交作品</h1>
+    <p>可以直接上传已有作品，也可以导入保存过的概念方案。</p>
     <form id="final-submit-form" class="submission-form">
-    <fieldset><legend>作品材料</legend><label class="file-pick">选择展板或图纸<input type="file" name="files" accept=".skp,.pdf,.jpg,.jpeg,.png" multiple><small>SKP、PDF、JPG、PNG · 最多 3 份，每份 20 MB</small></label>
+    <fieldset><legend>作品材料</legend><label class="file-pick">选择模型、展板或图纸<input type="file" name="files" accept=".skp,.pdf,.jpg,.jpeg,.png" multiple><small>SKP、PDF、JPG、PNG · 最多 3 份，每份 20 MB</small></label>
     ${options.length?`<details><summary>从概念生成导入</summary><label>只导入所选方案的平面和体块<select name="source"><option value="">使用上传的材料</option>${options.join('')}</select></label></details>`:''}</fieldset>
     <fieldset><legend>作品信息</legend><label>作品名称<input name="title" required maxlength="100"></label><label>设计说明或希望评阅的问题（选填）<textarea name="focus" rows="5" maxlength="3000"></textarea></label>
     <small>提交后可以单独请求 AI 点评，或邀请老师审查。</small><button class="btn primary" type="submit">提交并查看作品</button><output aria-live="polite"></output></fieldset></form></section>`;
@@ -94,13 +96,18 @@ export async function finalRevisionData(form,api){
 }
 
 export function finalList(list,tab) {
-  const rows=list.filter(r=>r.kind==='final' && (tab==='received'?r.role!=='owner':r.role==='owner'));
-  return `<section class="work-page"><div class="work-heading"><h1>最终评审</h1><a class="btn primary" href="#/final-new">＋ 提交作品</a></div>
-    <nav class="work-tabs" aria-label="评审范围">${[['mine','我提交的'],['received','邀请我评阅的']].map(([key,name])=>`<a href="#/finals/${key}" ${tab===key?'aria-current="page"':''}>${name}</a>`).join('')}</nav>
-    ${rows.map(r=>`<a class="work-row" href="#/final/${esc(r.id)}"><strong>${esc(r.title)}</strong><small>V${r.versionNumber} · ${r.verdicts?.length?esc(r.verdicts.map(v=>v.author+' '+v.decision).join(' / ')):r.versionNumber>1?'待复核':'待评阅'}${r.pending?' · '+r.pending+' 条待处理':''}</small><span>→</span></a>`).join('')||`<p class="work-empty">${tab==='mine'?'还没有提交作品。可以直接上传已有展板。':'接受老师评阅邀请后，作品会显示在这里。'}</p>`}</section>`;
+  const rows=list.filter(r=>r.kind==='final'&&Boolean(r.trashedAt)===(tab==='trash')&&(r.role==='owner')===(tab!=='received'));
+  const empty={mine:'还没有提交作品。可以直接上传已有模型、展板或图纸。',received:'接受评阅邀请后，作品会显示在这里。',trash:'回收站里没有作品。'};
+  return `<section class="work-page"><div class="work-heading"><h1>作品评阅</h1><a class="btn primary" href="#/final-new">＋ 提交作品</a></div>
+    <nav class="work-tabs" aria-label="评阅范围">${[['mine','我提交的'],['received','邀请我评阅的'],['trash','回收站']].map(([key,name])=>`<a href="#/finals/${key}" ${tab===key?'aria-current="page"':''}>${name}</a>`).join('')}</nav>
+    ${rows.map(r=>{
+      const row=`<a class="work-row" href="#/final/${esc(r.id)}"><strong>${esc(r.title)}</strong><small>V${r.versionNumber} · ${r.trashedAt?'已移到回收站':r.verdicts?.length?esc(r.verdicts.map(v=>v.author+' '+v.decision).join(' / ')):r.versionNumber>1?'待复核':'待评阅'}${!r.trashedAt&&r.pending?' · '+r.pending+' 条待处理':''}</small><span>→</span></a>`;
+      return r.role==='owner'?`<article class="work-list-item">${row}${workActions(r.id,r.trashedAt?
+        [['room-final-restore','恢复作品']]:[['room-final-quick-export','导出最新版'],['room-final-trash','移到回收站']])}</article>`:row;
+    }).join('')||`<p class="work-empty">${empty[tab]}</p>`}</section>`;
 }
 export function finalDesk(room,{selected,tab,material,aiBusy,pdfPage,comparison,loading}) {
-  const work=room.version.snapshot, owner=room.role==='owner', reviewer=room.role==='reviewer';
+  const work=room.version.snapshot, owner=room.role==='owner'&&!room.trashedAt, reviewer=room.role==='reviewer';
   const file=work.files.find(f=>f.id===selected)||work.files[0];
   const drawing=work.drawing;
   const retry=file?.type==='skp'&&file.conversion?.status!=='ready'?`<p class="muted">${esc(MODEL_STATUS[file.conversion?.status]||'等待转换')}</p>
@@ -130,7 +137,8 @@ export function finalDesk(room,{selected,tab,material,aiBusy,pdfPage,comparison,
   const history=`<ol class="final-history">${room.versions.map(v=>`<li><button class="btn text" data-action="room-final-version" data-id="${esc(v.id)}">V${v.number} · ${esc(v.label)}</button><small>${date(v.createdAt)}</small></li>`).join('')}</ol>`;
   const reviewHistory=room.verdictHistory?.length?`<details><summary>本版教师评阅记录</summary>${room.verdictHistory.map(v=>
     `<article class="evaluation"><small>${esc(v.author)} · ${esc(v.decision)} · ${date(v.createdAt)}</small><p>${esc(v.text)}</p></article>`).join('')}</details>`:'';
-  return `<section class="final-desk"><a class="back-link" href="#/finals">← 最终评审</a><div class="work-heading"><h1>${esc(room.title)}</h1>${owner?'<button class="btn secondary" data-action="room-final-invite">邀请老师</button>':''}</div>
+  return `<section class="final-desk"><a class="back-link" href="#/finals">← 作品评阅</a><div class="work-heading"><h1>${esc(room.title)}</h1>${owner?'<button class="btn secondary" data-action="room-final-invite">邀请老师</button>':''}</div>
+    ${room.trashedAt?'<p>作品在回收站。<a href="#/finals/trash">前往回收站恢复</a></p>':''}
     <div class="final-version-strip row"><label>作品版本 <select id="room-final-version" ${loading?'disabled':''}>${room.versions.map(v=>`<option value="${esc(v.id)}" ${v.id===version.id?'selected':''}>V${v.number} · ${esc(v.label)}</option>`).join('')}</select></label>
     ${owner&&version.id===room.latestVersionId?'<button class="btn primary" data-action="room-final-revise">提交修订版</button>':''}
     <button class="btn secondary" data-action="room-export">导出此版</button>${loading?'<span role="status">正在读取版本…</span>':''}</div>

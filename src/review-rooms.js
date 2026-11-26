@@ -6,6 +6,7 @@ import {workflowSections} from './workflow-report.js';
 import {DESIGN_STAGES} from '../shared/design-workflow.js';
 import {downloadRoomReport} from './reports.js';
 import {downloadFinalReport} from './final-archive.js';
+import {mountMentorPicker} from './mentor-accounts.js';
 import {esc,category} from './materials.js';
 const date=s=>new Date(s).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false});
 const roles={owner:'项目所有者',reviewer:'受邀评审者',viewer:'只读访客'};
@@ -134,7 +135,7 @@ export function createReviewRooms({api,project,projects,save,etag,replaceState,m
  async function refreshList(){const stamp=navigation;listLoading=true;try{const result=await api('/api/review-rooms');if(stamp===navigation){list=result.rooms;listError=''}}catch(e){if(stamp===navigation){list=[];listError=e.message}}finally{if(stamp===navigation){listLoading=false;render()}}}
  function create(){const p=project();if(!p?.versions.length)return toast('先保存阶段快照，再创建评审室。');modal('邀请多方，评审一个明确的版本。','评审室只共享所选快照及其中的材料，不开放整个私人工作空间。',`<form id="room-create-form" data-project="${p.id}"><div class="form-field"><label>评审室名称</label><input name="title" required maxlength="100" value="${esc(p.name)} · 方案讨论"></div><div class="form-field"><label>共享版本</label><select name="versionId">${[...p.versions].reverse().map(v=>`<option value="${v.id}">V${v.number} · ${esc(v.label)}</option>`).join('')}</select></div><div class="callout">创建后可生成有期限的邀请链接。评审者邀请绑定邮箱；未被邀请的账号无法访问评审室。</div><div class="modal-actions"><button class="btn primary" type="submit">创建评审室</button></div></form>`)}
  async function createRoom(form){await save();const d=Object.fromEntries(new FormData(form)),r=await api('/api/review-rooms',{method:'POST',body:JSON.stringify({...d,projectId:form.dataset.project})});record=r;recordId=r.room.id;list=null;selected='report';closeModal();location.hash='#/room/'+r.room.id;render()}
- function page(final=false,tab='mine'){if(final){if(list===null&&!listLoading)queueMicrotask(refreshList);if(listError)return `<div class="work-empty">${esc(listError)} ${login()} <button data-action="room-refresh-list">刷新</button></div>`;return list===null?'<p class="work-empty">正在读取评审…</p>':finalList(list,tab==='received'?'received':'mine')}if(list===null&&!listLoading)queueMicrotask(refreshList);return `<div class="page-heading"><div><h1>概念讨论</h1><p>围绕共享的作品版本提出问题、回应和复核。</p></div><button class="btn primary" data-action="room-create">创建评审室</button></div><div class="notice blue">评审权限来自项目所有者的邀请。评审者邀请绑定邮箱；只读访客无法评论。公开网站不会公开私人项目。</div>${listError?`<div class="empty">${esc(listError)}<br>${login()}</div>`:listLoading?'<div class="empty">正在读取评审室…</div>':`<div class="room-grid">${(list||[]).filter(r=>r.kind!=='final').map(r=>`<article class="panel"><span class="tag blue">${roles[r.role]}</span><h2>${esc(r.title)}</h2><p>${esc(r.course)} · V${r.versionNumber} · ${r.comments} 条讨论</p><p>${taskLabels(r.tasks)}${r.tasks?.unread?' · 未读 ' + r.tasks.unread:''}</p><p class="muted">${date(r.createdAt)}</p><a class="btn secondary" href="#/room/${r.id}">进入评审室 →</a></article>`).join('')||'<div class="empty">还没有评审室。项目所有者可从阶段版本创建；受邀评审者从邀请链接加入。</div>'}</div>`}<button class="btn text" data-action="room-refresh-list">刷新列表</button>`}
+ function page(final=false,tab='mine'){if(final){if(list===null&&!listLoading)queueMicrotask(refreshList);if(listError)return `<div class="work-empty">${esc(listError)} ${login()} <button data-action="room-refresh-list">刷新</button></div>`;return list===null?'<p class="work-empty">正在读取评审…</p>':finalList(list,['received','trash'].includes(tab)?tab:'mine')}if(list===null&&!listLoading)queueMicrotask(refreshList);return `<div class="page-heading"><div><h1>概念讨论</h1><p>围绕共享的作品版本提出问题、回应和复核。</p></div><button class="btn primary" data-action="room-create">创建评审室</button></div><div class="notice blue">评审权限来自项目所有者的邀请。评审者邀请绑定邮箱；只读访客无法评论。公开网站不会公开私人项目。</div>${listError?`<div class="empty">${esc(listError)}<br>${login()}</div>`:listLoading?'<div class="empty">正在读取评审室…</div>':`<div class="room-grid">${(list||[]).filter(r=>r.kind!=='final').map(r=>`<article class="panel"><span class="tag blue">${roles[r.role]}</span><h2>${esc(r.title)}</h2><p>${esc(r.course)} · V${r.versionNumber} · ${r.comments} 条讨论</p><p>${taskLabels(r.tasks)}${r.tasks?.unread?' · 未读 ' + r.tasks.unread:''}</p><p class="muted">${date(r.createdAt)}</p><a class="btn secondary" href="#/room/${r.id}">进入评审室 →</a></article>`).join('')||'<div class="empty">还没有评审室。项目所有者可从阶段版本创建；受邀评审者从邀请链接加入。</div>'}</div>`}<button class="btn text" data-action="room-refresh-list">刷新列表</button>`}
  function room(id){
    if(recordId!==id&&!loading){recordId=id;record=null;selected='report';discussionFilter='all';queueMicrotask(()=>refresh(id))}
    if(!record)return `<div class="empty">${error?esc(error):'正在读取共享版本…'}${error?'<br>'+login()+'<button class="btn secondary" data-action="room-refresh">重新读取</button>':''}</div>`;
@@ -152,7 +153,7 @@ export function createReviewRooms({api,project,projects,save,etag,replaceState,m
  }
  function sourceLabel(r,id){return id.startsWith('option-')?'备选方案 · '+(r.version.snapshot.workflow?.options.find(o=>o.id===id.slice(7))?.title||'版本方案'):id.startsWith('workflow-')?'设计阶段 · '+(DESIGN_STAGES[Number(id.slice(9))-1]?.name||'未知'):id==='project'?'项目整体':id.startsWith('report-')?'汇报第 '+id.slice(7)+' 段':r.version.snapshot.files.find(f=>f.id===id)?.name||'版本材料'}
  function material(r,f){if(!f)return '<p>请选择版本材料。</p>';const base=revisionBase(r);return `<h3>${esc(f.name)}</h3><p class="muted">${esc(category(f))} · ${esc(f.versionLabel||'初始上传')}<br>${esc(f.purpose||'')}</p>${f.type==='skp'?f.conversion?.status==='ready'?'<div class="model-area room-model" id="room-model" data-file="'+esc(f.id)+'"><div class="model-loading">正在加载共享模型…</div></div><div class="row"><button class="btn secondary small" data-action="room-camera">轴测复位</button>'+(r.role==='reviewer'?'<button class="btn secondary small" data-action="room-pin">在模型表面定位提问</button>':'')+'</div>':'<div class="empty">此快照未保存可用的模型转换结果。</div>':f.type==='pdf'?pdfSheet(r,f,pdfPage,base):`<div class="room-image-stage"><img class="shared-image" id="room-image" data-file="${f.id}" alt="${esc(f.name)}${r.role==='reviewer'?'，点击图纸添加定位问题':''}" src="${base}/files/${f.id}">${r.comments.filter(c=>c.source===f.id&&c.imagePoint).map((c,i)=>`<button class="room-image-pin ${c.status==='已完成'?'resolved':''}" style="left:${c.imagePoint.x*100}%;top:${c.imagePoint.y*100}%" data-action="room-locate" data-id="${c.id}" aria-label="${esc(c.text)}">${i+1}</button>`).join('')}</div>${r.role==='reviewer'?'<p class="muted">点击图纸上的具体位置提出问题，批注绑定此提交版本。</p>':''}`}<div class="row"><a class="btn text" href="${base}/files/${f.id}" download>下载此版本原文件</a>${r.role==='reviewer'?`<button class="btn text" data-action="room-comment" data-id="${f.id}">围绕此材料提问</button>`:''}</div>`}
- function invites(r){return `<section class="panel invite-panel"><h2>共享与授权</h2><form id="room-invite-form"><div class="form-field"><label>邀请角色</label><select name="role"><option value="reviewer">评审者 · 可提问和复核</option><option value="viewer">只读访客</option></select></div><div class="form-field"><label>参与视角</label><select name="perspective"><option>教师</option>${r.kind==='final'?'':'<option>同伴</option><option>使用者</option>'}</select></div><div class="form-field"><label>受邀账号邮箱</label><input type="email" name="email" maxlength="200" placeholder="评审者邀请必须填写"><small>须与受邀者登录账号邮箱一致。只读邀请若不填邮箱，持链接并登录的人都可加入。</small></div><div class="form-field"><label>有效期</label><select name="days"><option value="7">7 天</option><option value="1">1 天</option><option value="30">30 天</option></select></div><button class="btn primary small" type="submit">生成邀请链接</button></form><div class="invite-list">${r.invites.map(i=>`<article><b>${roles[i.role]}</b><p>${esc(i.email||'持链接可加入')}<br>至 ${date(i.expiresAt)} · 已加入 ${i.acceptedCount||0} 人</p>${i.revoked?'<span class="tag gray">已撤销</span>':`<button class="btn text" data-action="room-revoke" data-id="${i.id}">撤销授权</button>`}</article>`).join('')}</div></section>`}
+ function invites(r){return `<section class="panel invite-panel"><h2>共享与授权</h2><form id="room-invite-form"><div class="form-field"><label>邀请角色</label><select name="role"><option value="reviewer">评审者 · 可提问和复核</option><option value="viewer">只读访客</option></select></div><div class="form-field"><label>参与视角</label><select name="perspective"><option>教师</option>${r.kind==='final'?'':'<option>同伴</option><option>使用者</option>'}</select></div><div class="form-field"><label for="invite-mentor">从导师名单选择</label><select name="mentorId" id="invite-mentor"><option value="">使用邮箱邀请</option></select><a class="btn text" href="/account#mentor-settings" target="_blank" rel="noopener">管理导师名单</a></div><div class="form-field"><label>受邀账号邮箱</label><input type="email" name="email" maxlength="200" placeholder="未选导师时，评审者需填写邮箱"><small>邮箱须与受邀者登录账号一致。只读邀请若不填邮箱，持链接并登录的人都可加入。</small></div><div class="form-field"><label>有效期</label><select name="days"><option value="7">7 天</option><option value="1">1 天</option><option value="30">30 天</option></select></div><button class="btn primary small" type="submit">生成邀请链接</button></form><div class="invite-list">${r.invites.map(i=>`<article><b>${roles[i.role]}</b><p>${esc(i.mentorName||i.email||'持链接可加入')}<br>至 ${date(i.expiresAt)} · 已加入 ${i.acceptedCount||0} 人</p>${i.revoked?'<span class="tag gray">已撤销</span>':`<button class="btn text" data-action="room-revoke" data-id="${i.id}">撤销授权</button>`}</article>`).join('')}</div></section>`}
  async function mutate(action,data){
    const original=record, stamp=navigation;
    if(original.room.kind==='final'&&action!=='versions'){
@@ -167,7 +168,15 @@ export function createReviewRooms({api,project,projects,save,etag,replaceState,m
  }
  function comment(source,point,imagePoint=null,planAnchor=null){if(record?.room.role!=='reviewer')return;modal('留下一个有依据的问题',esc(sourceLabel(viewing(),source))+(point?' · 已绑定模型位置与视角':imagePoint?' · 已绑定图纸位置':''),`<form id="room-comment-form" data-source="${source}"><div class="form-field"><label>讨论类型</label><select name="kind"><option>问题</option><option>批注</option><option>修改任务</option></select></div><div class="form-field"><label>问题或意见</label><textarea name="text" required maxlength="4000"></textarea></div><div class="form-field"><label>建议补充的材料或后续任务</label><textarea name="task" maxlength="1000"></textarea></div><div class="modal-actions"><button class="btn primary" type="submit">发布到评审室</button></div></form>`);document.querySelector('#room-comment-form')._point=point||null;const form=document.querySelector('#room-comment-form');
  form._imagePoint=imagePoint;form._anchor=planAnchor;form._versionId=viewing().version.id}
+ async function setRoomTrash(id,trashed){
+   const {etag:version}=await finalView(id,'latest');
+   await api(roomUrl(id)+'/trash',{method:'POST',headers:{'If-Match':version},body:JSON.stringify({trashed})});
+   closeModal();list=null;
+   await refreshList();
+   toast(trashed?'作品已移到回收站。':'作品已恢复。');
+ }
  async function submit(form){const d=Object.fromEntries(new FormData(form));
+ if(form.id==='room-final-trash-form')return setRoomTrash(form.dataset.id,true);
  if(form.id==='room-final-revision-form'){
    const room=record.room,stamp=navigation;
    try{
@@ -200,7 +209,22 @@ export function createReviewRooms({api,project,projects,save,etag,replaceState,m
    }
    await mutate('reply',payload);
  }else return;closeModal();render();toast('评审记录已保存。')}
- async function action(a,b){if(a==='room-final-convert'){
+ async function action(a,b){
+ if(a==='room-final-trash'){
+   const row=list?.find(item=>item.id===b.dataset.id&&item.role==='owner');
+   if(!row)return;
+   modal('将作品移到回收站？',esc(row.title)+' · 受邀老师暂时无法打开。恢复后，有效邀请将再次可用。',`<form id="room-final-trash-form" data-id="${esc(row.id)}"><div class="modal-actions"><button class="btn primary" type="submit">移到回收站</button></div></form>`);
+ }
+ else if(a==='room-final-restore')await setRoomTrash(b.dataset.id,false);
+ else if(a==='room-final-quick-export'){
+   b.disabled=true;
+   try{
+     const {room}=await finalView(b.dataset.id,'latest');
+     await downloadFinalReport(room);
+     toast('已导出最新版评阅档案，可打印为 PDF。');
+   }finally{b.disabled=false}
+ }
+ else if(a==='room-final-convert'){
    const room=record.room,file=room.version.snapshot.files.find(f=>f.id===b.dataset.id);if(!file)return;
    b.disabled=true;const status=document.querySelector('#final-conversion-status');
    const conversion=createConversions({api,update(id,state){if(status)status.textContent=MODEL_STATUS[state.status]||state.status},onReady(){}});
@@ -223,7 +247,7 @@ export function createReviewRooms({api,project,projects,save,etag,replaceState,m
    const point=previous.comments.findLast(c=>c.source===file.id&&c.point)?.point;
    comparison={number:previous.version.number,file,base:revisionBase(previous),camera:point?.camera};render();
  }
- else if(a==='room-final-invite'){modal('邀请老师评阅',esc(record.room.title),invites(record.room))}
+ else if(a==='room-final-invite'){modal('邀请老师评阅',esc(record.room.title),invites(record.room));mountMentorPicker(document.querySelector('#room-invite-form'),api)}
  else if(a==='room-final-verdict'){const r=record.room;modal('发布教师总评',esc(r.title)+' · V'+r.version.number,`<form id="room-verdict-form" data-version="${esc(r.version.id)}" class="submission-fields"><label>审查结论<select name="decision"><option>已评阅</option><option>需补充</option><option>需修改</option></select></label><label>教师评语<textarea name="text" required rows="5" maxlength="4000"></textarea></label><button class="btn primary" type="submit">发布总评</button></form>`)}
  else if(a==='room-final-ai'){
    const original=record,r=original.room;
@@ -288,6 +312,7 @@ export function createReviewRooms({api,project,projects,save,etag,replaceState,m
  }}
 
  async function mount(){
+ mountMentorPicker(document.querySelector('#room-invite-form'),api);
  document.querySelector('#room-final-version')?.addEventListener('change',event=>selectFinalVersion(event.target.value).catch(error=>toast(error.message)));
  document.querySelector('#room-concept-version')?.addEventListener('change',event=>selectVersion(event.target.value).catch(error=>toast(error.message)));
  document.querySelector('#room-concept-option')?.addEventListener('change',event=>{optionId=event.target.value;anchor=null;render()});

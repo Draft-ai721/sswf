@@ -1,5 +1,6 @@
 import {RoomError,valid,versionSummaries,sharedRevision,addRevision,conceptAnchor,conceptTasks,taskSummary,markTasksRead} from './concept-revisions.js';
 import {modelSnapshot} from './models.js';
+import {findMentor} from './mentors.js';
 import {createFinalSubmission,addFinalVersion,finalAiResult,finalLatest,finalVersion,finalEntryVersion,finalVerdicts,finalVerdictHistory,reviewImageBytes} from './final-submissions.js';
 const json=(x,status=200)=>new Response(JSON.stringify(x),{status,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}});
 const required=(s,max)=>{if(typeof s!=='string'||!s.trim()||s.length>max)throw new RoomError('请填写有效内容，且不要超过长度限制。');return s.trim()};
@@ -8,11 +9,11 @@ const roomKey=id=>'review-rooms/'+id+'.json';
 async function write(b,k,old,value){const r=await b.put(k,JSON.stringify(value),{onlyIf:old?{etagMatches:old.etag}:{etagDoesNotMatch:'*'},httpMetadata:{contentType:'application/json'}});if(!r)throw new RoomError('讨论已在其他页面更新，请刷新后重试。',409);return r}
 async function digest(s){return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s))),x=>x.toString(16).padStart(2,'0')).join('')}
 async function index(b,prefix,id){const k=prefix+'review-rooms.json';for(let i=0;i<5;i++){const old=await read(b,k);try{await write(b,k,old,[id,...(old?.value||[]).filter(x=>x!==id)].slice(0,100));return}catch(e){if(e.status!==409)throw e}}throw new RoomError('暂时无法登记评审室，请重试。',503)}
-function access(room,user){if(room.owner===user)return 'owner';const member=room.members.find(m=>m.user===user);const invite=member&&room.invites.find(i=>i.id===member.inviteId);if(!invite||invite.revoked||Date.parse(invite.expiresAt)<=Date.now())throw new RoomError('未获得评审授权，或邀请已过期、已撤销。',403);return invite.role}
+function access(room,user){if(room.owner===user)return 'owner';if(room.trashedAt)throw new RoomError('作者已将作品移到回收站。',403);const member=room.members.find(m=>m.user===user);const invite=member&&room.invites.find(i=>i.id===member.inviteId);if(!invite||invite.revoked||Date.parse(invite.expiresAt)<=Date.now())throw new RoomError('未获得评审授权，或邀请已过期、已撤销。',403);return invite.role}
 function present(room,role,user){return {...room,operations:undefined,modelResults:undefined,versionModels:undefined,
  comments:room.comments.map(({authorId,...comment})=>({...comment,canResolve:role==='reviewer'&&(!authorId||authorId===user)})),
  ...(room.kind!=='final'?{versions:versionSummaries(room),tasks:conceptTasks(room,role,user)}:{}),
- owner:undefined,ownerPrefix:undefined,members:undefined,invites:role==='owner'?room.invites.map(({tokenHash,...i})=>({...i,acceptedCount:room.members.filter(m=>m.inviteId===i.id).length})):undefined,role}}
+ owner:undefined,ownerPrefix:undefined,members:undefined,invites:role==='owner'?room.invites.map(({tokenHash,targetUser,...i})=>({...i,acceptedCount:room.members.filter(m=>m.inviteId===i.id).length})):undefined,role}}
 async function viewFor(b,prefix,room,role,user,versionId){
  const view=present(room,role,user);
  if(room.kind!=='final')view.taskSummary=await taskSummary(b,prefix,room,role,user);
@@ -61,7 +62,7 @@ try{
        const comments=final?r.comments.filter(c=>finalEntryVersion(r,c)===latest.id):r.comments;
        const verdicts=final?finalVerdicts(r,latest.id):[];
        rooms.push({id,title:r.title,projectName:r.version.snapshot.name,versionNumber:latest.number,course:r.course?.name||'',createdAt:r.createdAt,
-         role,kind:r.kind||'concept',verdict:verdicts.at(-1)?.decision||'',comments:comments.length,
+         role,kind:r.kind||'concept',trashedAt:r.trashedAt,verdict:verdicts.at(-1)?.decision||'',comments:comments.length,
          ...(final?{verdicts,pending:comments.filter(c=>c.status!=='已完成').length}:{}),tasks:await taskSummary(b,prefix,r,role,user)});
      }catch{}
    }
@@ -85,9 +86,9 @@ try{
      await index(b,prefix,room.id);
       return json({room:await viewFor(b,prefix,room,'owner',user),etag:saved.etag},201);
    }
-   const p=state?.value.projects.find(p=>p.id===data.projectId),v=p?.versions.find(v=>v.id===data.versionId);if(!v)throw new RoomError('请先保存并选择一个不可变阶段版本。',404);const id=crypto.randomUUID(),room={id,title:required(data.title,100),owner:user,ownerPrefix:prefix,projectId:p.id,course:structuredClone(state.value.course),version:structuredClone(v),members:[],invites:[],comments:[],createdAt:new Date().toISOString()};const r=await write(b,roomKey(id),null,room);await index(b,prefix,id);return json({room:present(room,'owner',user),etag:r.etag},201)}
- if(u.pathname==='/api/review-rooms/accept'&&request.method==='POST'){const data=await readJson(request,4000);if(typeof data.token!=='string'||!/^[a-f0-9]{48}$/.test(data.token))throw new RoomError('邀请链接无效。',404);const tokenHash=await digest(data.token),ref=await read(b,'review-invites/'+tokenHash+'.json');if(!ref)throw new RoomError('邀请链接不存在。',404);const old=await read(b,roomKey(ref.value.roomId));if(!old)throw new RoomError('评审室不存在。',404);const room=old.value,invite=room.invites.find(i=>i.tokenHash===tokenHash);if(!invite||invite.revoked||Date.parse(invite.expiresAt)<=Date.now())throw new RoomError('邀请已过期或被撤销。',403);if(invite.email&&!email)throw new RoomError('此邀请绑定邮箱，请先由工作坊管理员确认你的账号身份。',403);if(invite.email&&invite.email!==email)throw new RoomError('此邀请仅限指定邮箱的登录账号使用。',403);if(room.owner!==user){room.members=room.members.filter(m=>m.user!==user);room.members.push({user,inviteId:invite.id,joinedAt:new Date().toISOString()});await write(b,roomKey(room.id),old,room)}await index(b,prefix,room.id);return json({roomId:room.id,kind:room.kind||'concept'})}
- const m=u.pathname.match(/^\/api\/review-rooms\/([a-zA-Z0-9-]{1,80})(?:\/(invites|revoke|comments|reply|resolve|versions|read-tasks|verdict|refresh-model|files|models)(?:\/([a-zA-Z0-9-]{1,80}))?)?$/);
+   const p=state?.value.projects.find(p=>p.id===data.projectId&&!p.trashedAt),v=p?.versions.find(v=>v.id===data.versionId);if(!v)throw new RoomError('请先保存并选择一个不可变阶段版本。',404);const id=crypto.randomUUID(),room={id,title:required(data.title,100),owner:user,ownerPrefix:prefix,projectId:p.id,course:structuredClone(state.value.course),version:structuredClone(v),members:[],invites:[],comments:[],createdAt:new Date().toISOString()};const r=await write(b,roomKey(id),null,room);await index(b,prefix,id);return json({room:present(room,'owner',user),etag:r.etag},201)}
+ if(u.pathname==='/api/review-rooms/accept'&&request.method==='POST'){const data=await readJson(request,4000);if(typeof data.token!=='string'||!/^[a-f0-9]{48}$/.test(data.token))throw new RoomError('邀请链接无效。',404);const tokenHash=await digest(data.token),ref=await read(b,'review-invites/'+tokenHash+'.json');if(!ref)throw new RoomError('邀请链接不存在。',404);const old=await read(b,roomKey(ref.value.roomId));if(!old)throw new RoomError('评审室不存在。',404);const room=old.value,invite=room.invites.find(i=>i.tokenHash===tokenHash);if(room.trashedAt||!invite||invite.revoked||Date.parse(invite.expiresAt)<=Date.now())throw new RoomError('邀请已过期、被撤销或作品暂不可评阅。',403);if(invite.targetUser&&(!email||invite.targetUser!==user))throw new RoomError('请使用邀请中指定的导师账号。',403);if(invite.email&&!email)throw new RoomError('此邀请绑定邮箱，请先由工作坊管理员确认你的账号身份。',403);if(invite.email&&invite.email!==email)throw new RoomError('此邀请仅限指定邮箱的登录账号使用。',403);if(room.owner!==user){room.members=room.members.filter(m=>m.user!==user);room.members.push({user,inviteId:invite.id,joinedAt:new Date().toISOString()});await write(b,roomKey(room.id),old,room)}await index(b,prefix,room.id);return json({roomId:room.id,kind:room.kind||'concept'})}
+ const m=u.pathname.match(/^\/api\/review-rooms\/([a-zA-Z0-9-]{1,80})(?:\/(invites|revoke|comments|reply|resolve|versions|read-tasks|verdict|refresh-model|files|models|trash)(?:\/([a-zA-Z0-9-]{1,80}))?)?$/);
  const revisionPath=u.pathname.match(/^\/api\/review-rooms\/([a-zA-Z0-9-]{1,80})\/versions\/([a-zA-Z0-9-]{1,80})(?:\/(files|models|evidence|ai-views)\/([a-zA-Z0-9-]{1,80})(?:\/([a-zA-Z0-9-]{1,80}))?)?$/);
  if(!m&&!revisionPath)throw new RoomError('评审接口不存在。',404);
  const old=await read(b,roomKey((revisionPath||m)[1]));if(!old)throw new RoomError('评审室不存在。',404);const room=old.value,role=access(room,user);
@@ -114,6 +115,16 @@ try{
  }
  if(request.method!=='POST')throw new RoomError('不支持此操作。',405);
  const data=await readJson(request,!concept&&m[2]==='versions'?192*1024:64000);
+ if(m[2]==='trash'){
+   if(concept||role!=='owner')throw new RoomError('只有作品作者可以移入或移出回收站。',403);
+   if(typeof data.trashed!=='boolean')throw new RoomError('请指定回收站状态。');
+   if(!!room.trashedAt===data.trashed)return json({trashedAt:room.trashedAt||null,etag:old.etag});
+   if(request.headers.get('If-Match')!==old.etag)throw new RoomError('评阅记录已更新，请刷新后重试。',409);
+   if(data.trashed)room.trashedAt=new Date().toISOString();else delete room.trashedAt;
+   const saved=await write(b,roomKey(room.id),old,room);
+   return json({trashedAt:room.trashedAt||null,etag:saved.etag});
+ }
+ if(room.trashedAt)throw new RoomError('请先恢复回收站中的作品。',409);
  if(m[2]==='read-tasks'){
    if(!concept)throw new RoomError('此评审室没有概念讨论待办。',404);
    await markTasksRead(b,prefix,room,role,user,data.eventIds);
@@ -163,7 +174,7 @@ try{
    room.verdicts=[...(room.verdicts?.length?room.verdicts:room.verdict?[room.verdict]:[]),verdict];
    if(room.verdicts.length>100)throw new RoomError('本场评语已达到上限。');
  }
- else if(m[2]==='invites'){if(room.kind==='final'&&data.role==='reviewer'&&data.perspective!=='教师')throw new RoomError('终评由受邀教师评阅。');if(role!=='owner')throw new RoomError('只有项目所有者可以创建邀请。',403);if(!['reviewer','viewer'].includes(data.role))throw new RoomError('邀请角色无效。');const boundEmail=String(data.email||'').trim().toLowerCase();if(boundEmail&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(boundEmail))throw new RoomError('请输入有效的受邀邮箱。');if(data.role==='reviewer'&&!boundEmail)throw new RoomError('评审者邀请需要绑定邮箱。');if(room.invites.filter(i=>!i.revoked).length>=30)throw new RoomError('请先撤销不再使用的邀请。');const days=Number(data.days);if(![1,7,30].includes(days))throw new RoomError('请选择有效期限。');const token=Array.from(crypto.getRandomValues(new Uint8Array(24)),x=>x.toString(16).padStart(2,'0')).join(''),tokenHash=await digest(token),invite={id:crypto.randomUUID(),tokenHash,role:data.role,email:boundEmail,perspective:['教师','同伴','使用者'].includes(data.perspective)?data.perspective:'教师',expiresAt:new Date(Date.now()+days*86400000).toISOString(),createdAt:new Date().toISOString(),revoked:false};if(!concept)await finalVersion(b,room,versionId);room.invites.push(invite);const r=await write(b,roomKey(room.id),old,room);await write(b,'review-invites/'+tokenHash+'.json',null,{roomId:room.id});return json({room:await viewFor(b,prefix,room,role,user,versionId),etag:r.etag,inviteUrl:u.origin+'/#/invite/'+token},201)}
+ else if(m[2]==='invites'){if(room.kind==='final'&&data.role==='reviewer'&&data.perspective!=='教师')throw new RoomError('终评由受邀教师评阅。');if(role!=='owner')throw new RoomError('只有项目所有者可以创建邀请。',403);if(!['reviewer','viewer'].includes(data.role))throw new RoomError('邀请角色无效。');const mentor=data.mentorId?await findMentor(b,prefix,data.mentorId):null;if(data.mentorId&&(!mentor||data.role!=='reviewer'||data.perspective!=='教师'))throw new RoomError('请选择导师名单中的评审者。');const boundEmail=mentor?'':String(data.email||'').trim().toLowerCase();if(boundEmail&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(boundEmail))throw new RoomError('请输入有效的受邀邮箱。');if(data.role==='reviewer'&&!boundEmail&&!mentor)throw new RoomError('请选择导师或填写评审者邮箱。');if(room.invites.filter(i=>!i.revoked).length>=30)throw new RoomError('请先撤销不再使用的邀请。');const days=Number(data.days);if(![1,7,30].includes(days))throw new RoomError('请选择有效期限。');const token=Array.from(crypto.getRandomValues(new Uint8Array(24)),x=>x.toString(16).padStart(2,'0')).join(''),tokenHash=await digest(token),invite={id:crypto.randomUUID(),tokenHash,role:data.role,email:boundEmail,...(mentor?{targetUser:mentor.user,mentorName:mentor.name}:{}),perspective:['教师','同伴','使用者'].includes(data.perspective)?data.perspective:'教师',expiresAt:new Date(Date.now()+days*86400000).toISOString(),createdAt:new Date().toISOString(),revoked:false};if(!concept)await finalVersion(b,room,versionId);room.invites.push(invite);const r=await write(b,roomKey(room.id),old,room);await write(b,'review-invites/'+tokenHash+'.json',null,{roomId:room.id});return json({room:await viewFor(b,prefix,room,role,user,versionId),etag:r.etag,inviteUrl:u.origin+'/#/invite/'+token},201)}
  else if(m[2]==='revoke'){if(role!=='owner')throw new RoomError('只有项目所有者可以撤销邀请。',403);const invite=room.invites.find(i=>i.id===data.inviteId);if(!invite)throw new RoomError('邀请不存在。',404);if(!concept)await finalVersion(b,room,versionId);invite.revoked=true}
  else if(m[2]==='comments'){
  if(role!=='reviewer')throw new RoomError('请由受邀评审者提出问题；项目所有者可回应。',403);
